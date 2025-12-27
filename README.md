@@ -191,16 +191,6 @@ MIT License - see [LICENSE](LICENSE)
 | Depth Anything V2 | Apache 2.0 | ✅ Commercial OK |
 | SVD (in VAS) | Stability AI | ⚠️ Check if revenue >$1M |
 
-## 🗺️ Roadmap
-
-- [x] v0.1.0 - Diffusion-VAS skeleton
-- [x] v0.1.1 - Diffusion-VAS with depth
-- [x] v0.2.0 - SAM4D pipeline integration
-- [x] v0.3.0 - FBX/Alembic export
-- [x] v0.3.1 - SAM3D_OUTPUT compatibility fix
-- [ ] v0.4.0 - Camera solver integration  
-- [ ] v1.0.0 - Stable release
-
 ## 🙏 Acknowledgments
 
 - [SAM-Body4D](https://github.com/gaomingqi/sam-body4d) - Mingqi Gao et al.
@@ -225,8 +215,3 @@ MIT License - see [LICENSE](LICENSE)
     year={2025}
 }
 ```
-
-## 📞 Support
-
-- [Issues](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/issues)
-- [Discussions](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/discussions)
