@@ -1,6 +1,6 @@
 {
-  "last_node_id": 10,
-  "last_link_id": 14,
+  "last_node_id": 8,
+  "last_link_id": 10,
   "nodes": [
     {
       "id": 1,
@@ -62,14 +62,12 @@
       "id": 4,
       "type": "SAM4D_CreateMeshSequence",
       "pos": [100, 400],
-      "size": {"0": 280, "1": 160},
+      "size": {"0": 280, "1": 140},
       "flags": {},
       "order": 3,
       "mode": 0,
       "inputs": [
-        {"name": "mesh_data", "type": "MESH_DATA", "link": null},
-        {"name": "vertices", "type": "NUMPY", "link": null},
-        {"name": "faces", "type": "NUMPY", "link": null}
+        {"name": "mesh_data", "type": "SAM3D_OUTPUT", "link": null}
       ],
       "outputs": [
         {"name": "mesh_sequence", "type": "SAM4D_MESH_SEQUENCE", "links": [5]}
@@ -89,7 +87,7 @@
         {"name": "mesh_sequence", "type": "SAM4D_MESH_SEQUENCE", "link": 5}
       ],
       "outputs": [
-        {"name": "smoothed_sequence", "type": "SAM4D_MESH_SEQUENCE", "links": [10, 11, 12]}
+        {"name": "smoothed_sequence", "type": "SAM4D_MESH_SEQUENCE", "links": [10, 12]}
       ],
       "properties": {"Node name for S&R": "SAM4D_TemporalFusion"},
       "widgets_values": ["gaussian", 1.0, true, true]
@@ -113,28 +111,11 @@
     },
     {
       "id": 7,
-      "type": "SAM4D_ExportCharacterOBJ",
+      "type": "SAM4D_VisualizeMeshSequence",
       "pos": [760, 500],
       "size": {"0": 300, "1": 100},
       "flags": {},
       "order": 6,
-      "mode": 0,
-      "inputs": [
-        {"name": "mesh_sequence", "type": "SAM4D_MESH_SEQUENCE", "link": 11}
-      ],
-      "outputs": [
-        {"name": "output_directory", "type": "STRING", "links": []}
-      ],
-      "properties": {"Node name for S&R": "SAM4D_ExportCharacterOBJ"},
-      "widgets_values": ["outputs/sam4d_obj_sequence", "Y-up (Maya/Blender)", "mesh"]
-    },
-    {
-      "id": 8,
-      "type": "SAM4D_VisualizeMeshSequence",
-      "pos": [760, 630],
-      "size": {"0": 300, "1": 100},
-      "flags": {},
-      "order": 7,
       "mode": 0,
       "inputs": [
         {"name": "mesh_sequence", "type": "SAM4D_MESH_SEQUENCE", "link": 12}
@@ -146,14 +127,14 @@
       "widgets_values": [512, false]
     },
     {
-      "id": 9,
+      "id": 8,
       "type": "Note",
-      "pos": [100, 620],
-      "size": {"0": 350, "1": 130},
+      "pos": [100, 580],
+      "size": {"0": 350, "1": 100},
       "flags": {},
-      "order": 8,
+      "order": 7,
       "mode": 0,
-      "properties": {"text": "SAM4DBodyCapture v0.3.0 Workflow\n\nConnect:\n- mesh_data from SAM3DBody nodes\n- images/masks from SAM3 video propagator\n\nOutputs:\n- FBX for Maya/Blender/Unreal/Unity\n- OBJ sequence (universal)\n- Point cloud preview"}
+      "properties": {"text": "SAM4DBodyCapture v0.3.1 Workflow\n\nConnect mesh_data (SAM3D_OUTPUT) from:\n  SAM3DBody Process → Create Mesh Sequence\n\nOutputs: FBX for Maya/Blender/Unreal"}
     }
   ],
   "links": [
@@ -162,18 +143,17 @@
     [3, 1, 0, 3, 0, "SAM4D_PIPELINE"],
     [5, 4, 0, 5, 0, "SAM4D_MESH_SEQUENCE"],
     [10, 5, 0, 6, 0, "SAM4D_MESH_SEQUENCE"],
-    [11, 5, 0, 7, 0, "SAM4D_MESH_SEQUENCE"],
-    [12, 5, 0, 8, 0, "SAM4D_MESH_SEQUENCE"]
+    [12, 5, 0, 7, 0, "SAM4D_MESH_SEQUENCE"]
   ],
   "groups": [
     {
-      "title": "Occlusion Handling",
+      "title": "Occlusion Handling (Optional)",
       "bounding": [80, 50, 1050, 280],
       "color": "#3f789e"
     },
     {
       "title": "Mesh Processing & Export",
-      "bounding": [80, 350, 1000, 430],
+      "bounding": [80, 350, 1000, 360],
       "color": "#8A8"
     }
   ],

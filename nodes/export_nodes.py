@@ -53,22 +53,6 @@ COORD_SYSTEMS = {
         ], dtype=np.float32),
         "scale": 100.0,  # Unreal uses cm
     },
-    "Y-up (Unity)": {
-        "matrix": np.array([
-            [-1, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1]
-        ], dtype=np.float32),
-        "scale": 1.0,
-    },
-    "Y-up (Houdini)": {
-        "matrix": np.eye(3),
-        "scale": 1.0,
-    },
-    "Y-up (Nuke)": {
-        "matrix": np.eye(3),
-        "scale": 1.0,
-    },
 }
 
 
@@ -610,55 +594,6 @@ class SAM4DExportCharacterAlembic:
         return (filepath,)
 
 
-class SAM4DExportCharacterOBJ:
-    """
-    Export mesh sequence as OBJ file sequence.
-    
-    Most compatible format - works with all 3D software.
-    Creates one OBJ file per frame.
-    """
-    
-    COORD_SYSTEMS = list(COORD_SYSTEMS.keys())
-    
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "mesh_sequence": ("SAM4D_MESH_SEQUENCE",),
-                "output_path": ("STRING", {
-                    "default": "outputs/sam4d_obj_sequence",
-                }),
-            },
-            "optional": {
-                "coordinate_system": (cls.COORD_SYSTEMS, {"default": "Y-up (Maya/Blender)"}),
-                "prefix": ("STRING", {"default": "mesh"}),
-            }
-        }
-    
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("output_directory",)
-    FUNCTION = "export"
-    CATEGORY = "SAM4DBodyCapture/Export"
-    OUTPUT_NODE = True
-    
-    def export(
-        self,
-        mesh_sequence: dict,
-        output_path: str,
-        coordinate_system: str = "Y-up (Maya/Blender)",
-        prefix: str = "mesh",
-    ):
-        seq = SAM4DMeshSequence.from_dict(mesh_sequence)
-        
-        print(f"[SAM4D Export] Exporting OBJ sequence to: {output_path}")
-        
-        saved = export_obj_sequence(output_path, seq, prefix, coordinate_system)
-        
-        print(f"[SAM4D Export] Saved {len(saved)} OBJ files")
-        
-        return (output_path,)
-
-
 class SAM4DExportCameraFBX:
     """
     Export camera animation as FBX file.
@@ -777,7 +712,6 @@ class SAM4DExportCameraJSON:
 NODE_CLASS_MAPPINGS = {
     "SAM4DExportCharacterFBX": SAM4DExportCharacterFBX,
     "SAM4DExportCharacterAlembic": SAM4DExportCharacterAlembic,
-    "SAM4DExportCharacterOBJ": SAM4DExportCharacterOBJ,
     "SAM4DExportCameraFBX": SAM4DExportCameraFBX,
     "SAM4DExportCameraJSON": SAM4DExportCameraJSON,
 }
@@ -785,7 +719,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM4DExportCharacterFBX": "📦 Export Character FBX",
     "SAM4DExportCharacterAlembic": "📦 Export Character Alembic",
-    "SAM4DExportCharacterOBJ": "📦 Export Character OBJ Sequence",
     "SAM4DExportCameraFBX": "🎥 Export Camera FBX",
     "SAM4DExportCameraJSON": "🎥 Export Camera JSON",
 }

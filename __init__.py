@@ -15,7 +15,7 @@ Version History:
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -113,7 +113,6 @@ try:
     NODE_CLASS_MAPPINGS.update({
         "SAM4D_ExportCharacterFBX": export_nodes.SAM4DExportCharacterFBX,
         "SAM4D_ExportCharacterAlembic": export_nodes.SAM4DExportCharacterAlembic,
-        "SAM4D_ExportCharacterOBJ": export_nodes.SAM4DExportCharacterOBJ,
         "SAM4D_ExportCameraFBX": export_nodes.SAM4DExportCameraFBX,
         "SAM4D_ExportCameraJSON": export_nodes.SAM4DExportCameraJSON,
     })
@@ -121,7 +120,6 @@ try:
     NODE_DISPLAY_NAME_MAPPINGS.update({
         "SAM4D_ExportCharacterFBX": "📦 Export Character FBX",
         "SAM4D_ExportCharacterAlembic": "📦 Export Character Alembic",
-        "SAM4D_ExportCharacterOBJ": "📦 Export Character OBJ Sequence",
         "SAM4D_ExportCameraFBX": "🎥 Export Camera FBX",
         "SAM4D_ExportCameraJSON": "🎥 Export Camera JSON",
     })

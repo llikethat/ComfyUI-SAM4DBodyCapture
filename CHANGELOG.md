@@ -13,6 +13,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.1] - 2025-12-27
+
+### Fixed
+- **Create Mesh Sequence** now uses correct `SAM3D_OUTPUT` type (was MESH_DATA)
+- Properly extracts `joint_coords`, `joint_rotations`, `camera` from SAM3DBody output
+
+### Changed
+- Simplified coordinate systems to only Y-up (Maya/Blender) and Z-up (Unreal)
+- Removed OBJ sequence export (FBX and Alembic are better supported)
+
+### Node Count: 16 Total
+- Export nodes: 4 (removed OBJ sequence)
+- Pipeline nodes: 4
+- Mesh nodes: 4
+- Diffusion-VAS nodes: 4
+
+---
+
 ## [0.3.0] - 2025-12-27
 
 ### Added
