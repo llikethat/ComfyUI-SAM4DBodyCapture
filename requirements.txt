@@ -1,0 +1,56 @@
+# ComfyUI-SAM4DBodyCapture Requirements
+# ======================================
+# Version: 0.1.1 (Diffusion-VAS + Depth)
+
+# Core dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.20.0
+Pillow>=9.0.0
+opencv-python>=4.5.0
+
+# Diffusion-VAS dependencies
+diffusers>=0.25.0
+accelerate>=0.20.0
+transformers>=4.30.0
+safetensors>=0.3.0
+
+# Depth estimation (Depth Anything V2)
+# Models auto-download from HuggingFace
+
+# Configuration & utilities
+omegaconf>=2.0.0
+imageio>=2.9.0
+scipy>=1.7.0
+
+# Optional: For GPU acceleration
+# xformers  # Uncomment for faster attention (requires CUDA)
+
+# ============================================
+# Future versions will add:
+# ============================================
+
+# v0.2.0 - SAM-Body4D
+# trimesh
+# pyrender
+# detectron2
+
+# v0.3.0 - Export
+# alembic (requires system install)
+# FBX SDK (optional, for native FBX)
+
+# ============================================
+# Notes
+# ============================================
+# 
+# Model downloads (~10GB total):
+# - diffusion-vas-amodal-segmentation: ~2GB
+# - diffusion-vas-content-completion: ~2GB  
+# - Depth-Anything-V2-Large: ~700MB
+#
+# GPU requirements:
+# - Minimum: 12GB VRAM (float16)
+# - Recommended: 16-24GB VRAM
+#
+# Install with:
+# pip install -r requirements.txt

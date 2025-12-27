@@ -1,0 +1,17 @@
+{
+    "last_node_id": 1,
+    "last_link_id": 0,
+    "nodes": [],
+    "links": [],
+    "groups": [],
+    "config": {},
+    "extra": {
+        "info": {
+            "name": "SAM4DBodyCapture Example Workflow",
+            "description": "Placeholder workflow - will be updated when Diffusion-VAS integration is complete",
+            "version": "0.1.0",
+            "author": "llikethat"
+        }
+    },
+    "version": 0.4
+}

@@ -19,3 +19,32 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+THIRD-PARTY LICENSES
+
+This project incorporates code and models from the following projects:
+
+1. SAM-Body4D (MIT License)
+   https://github.com/gaomingqi/sam-body4d
+   Copyright (c) 2025 Mingqi Gao
+
+2. Diffusion-VAS (MIT License)
+   https://github.com/Kaihua-Chen/diffusion-vas
+   Copyright (c) 2025 Kaihua Chen, Deva Ramanan, Tarasha Khurana
+
+3. SAM 3D Body (SAM License - Meta)
+   https://github.com/facebookresearch/sam-3d-body
+   Copyright (c) Meta Platforms, Inc. and affiliates
+   
+   SAM License restricts usage for:
+   - Military, weapons, nuclear, espionage purposes
+   - See full license at repository for complete terms
+
+4. Depth Anything V2 (Apache 2.0 License)
+   https://github.com/DepthAnything/Depth-Anything-V2
+
+5. Stable Video Diffusion (Stability AI Community License)
+   Used by Diffusion-VAS for video diffusion backbone
+   See: https://huggingface.co/stabilityai/stable-video-diffusion-img2vid-xt
