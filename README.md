@@ -4,7 +4,7 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.3.3-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.3.4-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
@@ -201,6 +201,7 @@ MIT License - see [LICENSE](LICENSE)
 - [x] v0.3.1 - SAM3D_OUTPUT compatibility
 - [x] v0.3.2 - Blender FBX export, FBX viewer
 - [x] v0.3.3 - External depth input support
+- [x] v0.3.4 - Import fixes
 - [ ] v0.4.0 - Camera solver integration  
 - [ ] v1.0.0 - Stable release
 

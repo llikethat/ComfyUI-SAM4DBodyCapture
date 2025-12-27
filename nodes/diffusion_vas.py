@@ -469,3 +469,38 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DiffusionVASContentCompletion": "🎭 Content Completion",
     "DiffusionVASUnloader": "🎭 Unload VAS Models",
 }
+
+# ============================================================================
+# Backward Compatibility Exports (for sam4d_pipeline.py)
+# ============================================================================
+
+# Alias functions with old names
+preprocess_masks_for_pipeline = preprocess_masks
+preprocess_images_for_pipeline = preprocess_images
+postprocess_amodal_masks = postprocess_masks
+
+
+class DepthEstimator:
+    """
+    Backward-compatible DepthEstimator class.
+    Now just a wrapper that uses gradient fallback.
+    For real depth, connect external depth node to depth_maps input.
+    """
+    
+    def __init__(self, model_size: str = "vitl", device: str = "cuda"):
+        self.device = device
+        self.model_size = model_size
+        self.loaded = False
+    
+    def load(self, model_path: str = None) -> bool:
+        """No-op - we use external depth now."""
+        print("[DepthEstimator] Using gradient fallback (connect external depth for better results)")
+        return False
+    
+    def estimate(self, images: torch.Tensor, resolution: Tuple[int, int] = (512, 1024)) -> torch.Tensor:
+        """Estimate depth using gradient fallback."""
+        return estimate_depth_gradient(images, resolution)
+    
+    def unload(self):
+        """No-op."""
+        pass

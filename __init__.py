@@ -15,7 +15,7 @@ Version History:
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.3.3"
+__version__ = "0.3.4"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -39,7 +39,7 @@ try:
         "SAM4D_DiffusionVASLoader": diffusion_vas.DiffusionVASLoader,
         "SAM4D_DiffusionVASAmodalSegmentation": diffusion_vas.DiffusionVASAmodalSegmentation,
         "SAM4D_DiffusionVASContentCompletion": diffusion_vas.DiffusionVASContentCompletion,
-        "SAM4D_DiffusionVASUnload": diffusion_vas.DiffusionVASUnload,
+        "SAM4D_DiffusionVASUnload": diffusion_vas.DiffusionVASUnloader,
     })
     
     NODE_DISPLAY_NAME_MAPPINGS.update({

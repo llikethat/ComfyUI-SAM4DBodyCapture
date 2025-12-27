@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.4] - 2025-12-27
+
+### Fixed
+- **Import errors** - Fixed `DiffusionVASUnloader` class name mismatch
+- **Backward compatibility** - Added `DepthEstimator` class and function aliases for sam4d_pipeline.py
+- All 17 nodes now load correctly
+
+---
+
 ## [0.3.3] - 2025-12-27
 
 ### Added
