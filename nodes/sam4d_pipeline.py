@@ -176,22 +176,30 @@ class SAM4DPipelineLoader:
     Load all models for the SAM4D pipeline.
     
     This loads:
-    - Depth Anything V2 for depth estimation
     - Diffusion-VAS for amodal segmentation (optional)
     - Diffusion-VAS for content completion (optional)
+    
+    Depth is handled externally (connect depth_maps input) or uses gradient fallback.
+    
+    For gated models, provide your HuggingFace API token.
+    Get token from: https://huggingface.co/settings/tokens
     """
     
-    DEPTH_MODELS = ["Large", "Base", "Small"]
     RESOLUTIONS = ["512x1024", "256x512", "384x768"]
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "depth_model": (cls.DEPTH_MODELS, {"default": "Large"}),
-                "resolution": (cls.RESOLUTIONS, {"default": "512x1024"}),
+                "resolution": (cls.RESOLUTIONS, {"default": "256x512"}),
                 "enable_amodal": ("BOOLEAN", {"default": True}),
                 "enable_completion": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "hf_token": ("STRING", {
+                    "default": "",
+                    "tooltip": "HuggingFace API token for model downloads. Get from: huggingface.co/settings/tokens"
+                }),
                 "device": (["cuda", "cpu", "auto"], {"default": "auto"}),
                 "dtype": (["float16", "float32"], {"default": "float16"}),
             }
@@ -204,12 +212,12 @@ class SAM4DPipelineLoader:
     
     def load_pipeline(
         self,
-        depth_model: str,
         resolution: str,
         enable_amodal: bool,
         enable_completion: bool,
-        device: str,
-        dtype: str,
+        hf_token: str = "",
+        device: str = "auto",
+        dtype: str = "float16",
     ):
         # Parse resolution
         h, w = map(int, resolution.split("x"))
@@ -226,12 +234,16 @@ class SAM4DPipelineLoader:
         
         print(f"[SAM4D] Loading pipeline on {dev}")
         
-        # Create VAS wrapper
-        vas_wrapper = DiffusionVASWrapper(device=dev, dtype=dt)
+        # Create VAS wrapper with token
+        vas_wrapper = DiffusionVASWrapper(
+            device=dev, 
+            dtype=dt, 
+            hf_token=hf_token if hf_token else None
+        )
         vas_wrapper.default_resolution = res_tuple
         
-        # Load depth model (always needed)
-        depth_loaded = vas_wrapper.load_depth_model(depth_model)
+        # Depth is now external - just set flag
+        depth_loaded = False  # Use external depth_maps input or gradient fallback
         
         # Optionally load amodal/completion
         amodal_loaded = False
@@ -254,7 +266,7 @@ class SAM4DPipelineLoader:
             "_type": "SAM4D_PIPELINE",
         }
         
-        print(f"[SAM4D] Pipeline ready: depth={depth_loaded}, amodal={amodal_loaded}, completion={completion_loaded}")
+        print(f"[SAM4D] Pipeline ready: depth=external, amodal={amodal_loaded}, completion={completion_loaded}")
         
         return (pipeline,)
 
@@ -268,17 +280,19 @@ class SAM4DOcclusionDetector:
     
     Accepts optional external depth_maps from any ComfyUI depth node
     (Depth-Anything-V2, DepthCrafter, ZoeDepth, etc.)
+    
+    Compatible with both SAM4D_PIPELINE and VAS_PIPELINE loaders.
     """
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "pipeline": ("SAM4D_PIPELINE",),
                 "images": ("IMAGE",),
                 "masks": ("MASK",),
             },
             "optional": {
+                "pipeline": ("SAM4D_PIPELINE,VAS_PIPELINE",),
                 "depth_maps": ("IMAGE", {
                     "tooltip": "External depth maps from any depth node (Depth-Anything, DepthCrafter, etc.)"
                 }),
@@ -296,17 +310,30 @@ class SAM4DOcclusionDetector:
     
     def detect(
         self,
-        pipeline: dict,
         images: torch.Tensor,
         masks: torch.Tensor,
+        pipeline: dict = None,
         depth_maps: torch.Tensor = None,
         iou_threshold: float = 0.7,
         object_ids: str = "1",
         num_frames: int = 25,
         seed: int = 23,
     ):
-        vas_wrapper: DiffusionVASWrapper = pipeline["vas_wrapper"]
-        resolution = pipeline["resolution"]
+        # Handle both pipeline types
+        if pipeline is None:
+            # No pipeline - use gradient depth fallback, no amodal
+            vas_wrapper = None
+            resolution = (256, 512)
+            amodal_available = False
+        elif pipeline.get("_type") == "SAM4D_PIPELINE":
+            vas_wrapper = pipeline["vas_wrapper"]
+            resolution = pipeline["resolution"]
+            amodal_available = pipeline.get("amodal_loaded", False)
+        else:
+            # VAS_PIPELINE format
+            vas_wrapper = pipeline.get("wrapper")
+            resolution = pipeline.get("resolution", (256, 512))
+            amodal_available = pipeline.get("amodal_loaded", False)
         
         # Parse object IDs
         obj_ids = [int(x.strip()) for x in object_ids.split(",")]
@@ -323,7 +350,7 @@ class SAM4DOcclusionDetector:
         # Create occlusion info
         occ_info = SAM4DOcclusionInfo(B)
         
-        # Use external depth if provided, otherwise estimate
+        # Use external depth if provided, otherwise use gradient fallback
         if depth_maps is not None:
             print("[SAM4D] Using external depth maps")
             # Ensure depth is in correct format [B, H, W, C]
@@ -332,9 +359,9 @@ class SAM4DOcclusionDetector:
             elif depth_maps.shape[-1] == 1:
                 depth_maps = depth_maps.repeat(1, 1, 1, 3)
             depth_out = depth_maps
-        else:
+        elif vas_wrapper is not None:
             print("[SAM4D] Estimating depth (using gradient fallback)...")
-            depth_out, _ = vas_wrapper.run_amodal_segmentation(
+            _, depth_out = vas_wrapper.run_amodal_segmentation(
                 images=images,
                 modal_masks=masks,
                 resolution=resolution,
@@ -342,9 +369,16 @@ class SAM4DOcclusionDetector:
                 seed=seed,
             )
             depth_out = depth_out.unsqueeze(-1).repeat(1, 1, 1, 3) if depth_out.dim() == 3 else depth_out
+        else:
+            # No pipeline, no external depth - create gradient fallback
+            print("[SAM4D] No pipeline - using gradient depth fallback")
+            depth_out = torch.zeros(B, H, W, 3, device=images.device)
+            for i in range(B):
+                y_grad = torch.linspace(0, 1, H).view(H, 1).expand(H, W)
+                depth_out[i] = y_grad.unsqueeze(-1).repeat(1, 1, 3)
         
         # If no amodal pipeline, return empty occlusion info
-        if not pipeline.get("amodal_loaded", False):
+        if not amodal_available or vas_wrapper is None:
             print("[SAM4D] No amodal pipeline - assuming no occlusions")
             for obj_id in obj_ids:
                 occ_info.add_object_results(obj_id, [1.0] * B, iou_threshold)
@@ -390,10 +424,7 @@ class SAM4DOcclusionDetector:
             
             print(f"[SAM4D] Object {obj_id}: {sum(occ_info.is_occluded[obj_id])} occluded frames")
         
-        # Prepare depth visualization
-        depth_vis = depth_maps.unsqueeze(-1).repeat(1, 1, 1, 3)
-        
-        return (occ_info.to_dict(), depth_vis, all_amodal_masks)
+        return (occ_info.to_dict(), depth_out, all_amodal_masks)
 
 
 class SAM4DAmodalCompletion:
@@ -401,18 +432,20 @@ class SAM4DAmodalCompletion:
     Complete occluded masks and optionally RGB content.
     
     Only processes frames identified as occluded by SAM4DOcclusionDetector.
+    
+    Compatible with both SAM4D_PIPELINE and VAS_PIPELINE loaders.
     """
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "pipeline": ("SAM4D_PIPELINE",),
                 "images": ("IMAGE",),
                 "masks": ("MASK",),
                 "occlusion_info": ("SAM4D_OCCLUSION_INFO",),
             },
             "optional": {
+                "pipeline": ("SAM4D_PIPELINE,VAS_PIPELINE",),
                 "complete_rgb": ("BOOLEAN", {"default": False}),
                 "num_frames": ("INT", {"default": 25, "min": 4, "max": 64}),
                 "seed": ("INT", {"default": 23}),
@@ -426,16 +459,31 @@ class SAM4DAmodalCompletion:
     
     def complete(
         self,
-        pipeline: dict,
         images: torch.Tensor,
         masks: torch.Tensor,
         occlusion_info: dict,
+        pipeline: dict = None,
         complete_rgb: bool = False,
         num_frames: int = 25,
         seed: int = 23,
     ):
-        vas_wrapper: DiffusionVASWrapper = pipeline["vas_wrapper"]
-        resolution = pipeline["resolution"]
+        # Handle both pipeline types
+        if pipeline is None:
+            print("[SAM4D] No pipeline provided - returning original masks/images")
+            return (masks, images)
+        elif pipeline.get("_type") == "SAM4D_PIPELINE":
+            vas_wrapper = pipeline["vas_wrapper"]
+            resolution = pipeline["resolution"]
+            completion_available = pipeline.get("completion_loaded", False)
+        else:
+            # VAS_PIPELINE format
+            vas_wrapper = pipeline.get("wrapper")
+            resolution = pipeline.get("resolution", (256, 512))
+            completion_available = pipeline.get("completion_loaded", False)
+        
+        if vas_wrapper is None:
+            print("[SAM4D] No pipeline wrapper - returning original masks/images")
+            return (masks, images)
         
         occ_info = SAM4DOcclusionInfo.from_dict(occlusion_info)
         
@@ -476,10 +524,9 @@ class SAM4DAmodalCompletion:
                 )
                 
                 # Optionally complete RGB
-                if complete_rgb and pipeline.get("completion_loaded", False):
+                if complete_rgb and completion_available:
                     completed_rgb = vas_wrapper.run_content_completion(
-                        frames=frame_images,
-                        modal_masks=obj_masks,
+                        images=frame_images,
                         amodal_masks=amodal_masks,
                         resolution=resolution,
                         num_frames=min(num_frames, end - start + 1),
@@ -491,11 +538,11 @@ class SAM4DAmodalCompletion:
 
 
 class SAM4DPipelineUnload:
-    """Unload SAM4D pipeline models to free VRAM."""
+    """Unload SAM4D/VAS pipeline models to free VRAM."""
     
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"pipeline": ("SAM4D_PIPELINE",)}}
+        return {"required": {"pipeline": ("SAM4D_PIPELINE,VAS_PIPELINE",)}}
     
     RETURN_TYPES = ()
     FUNCTION = "unload"
@@ -503,7 +550,8 @@ class SAM4DPipelineUnload:
     OUTPUT_NODE = True
     
     def unload(self, pipeline: dict):
-        vas_wrapper = pipeline.get("vas_wrapper")
+        # Handle both pipeline types
+        vas_wrapper = pipeline.get("vas_wrapper") or pipeline.get("wrapper")
         if vas_wrapper:
             vas_wrapper.unload()
         return ()

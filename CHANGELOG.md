@@ -13,6 +13,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.8] - 2025-12-27
+
+### Fixed
+- **Pipeline Compatibility** - SAM4D nodes now accept BOTH `SAM4D_PIPELINE` AND `VAS_PIPELINE` types
+- **Unified Pipeline Support** - You can use either loader with any downstream node
+- **Fixed depth output** - Corrected variable reference in occlusion detector
+
+### Pipeline Compatibility Matrix
+
+| Loader | Outputs | Compatible With |
+|--------|---------|-----------------|
+| **Load SAM4D Pipeline** | `SAM4D_PIPELINE` | All SAM4D nodes, All VAS nodes |
+| **Load Diffusion-VAS** | `VAS_PIPELINE` | All SAM4D nodes, All VAS nodes |
+
+### When to Use Which Loader
+
+| Loader | Best For |
+|--------|----------|
+| **Load SAM4D Pipeline** | Full body capture workflow with occlusion handling |
+| **Load Diffusion-VAS** | Standalone amodal segmentation, simpler setup |
+
+Both loaders are now fully interchangeable!
+
+---
+
+## [0.3.7] - 2025-12-27
+
+### Fixed
+- **SAM4DPipelineLoader** - Fixed missing method calls (`load_amodal_pipeline`, `run_amodal_segmentation`)
+- **Compatibility layer** - Added aliases in DiffusionVASWrapper for SAM4D pipeline nodes
+- **hf_token support** - Added to SAM4DPipelineLoader node
+
+### Two Pipeline Options
+
+**Option 1: SAM4D Pipeline (Recommended for full workflow)**
+```
+SAM4DPipelineLoader → SAM4DOcclusionDetector → SAM4DAmodalCompletion
+     (SAM4D_PIPELINE)    ↓                          ↓
+                    occlusion_info          completed masks/images
+```
+
+**Option 2: Standalone VAS (For amodal segmentation only)**
+```
+DiffusionVASLoader → DiffusionVASAmodalSegmentation
+    (VAS_PIPELINE)         ↓
+                      amodal_masks
+```
+
+### When to Use Which
+
+| Use Case | Pipeline |
+|----------|----------|
+| Full body capture with occlusion handling | SAM4D Pipeline |
+| Just amodal mask generation | Standalone VAS |
+| Testing/debugging VAS models | Standalone VAS |
+
+---
+
 ## [0.3.6] - 2025-12-27
 
 ### Added

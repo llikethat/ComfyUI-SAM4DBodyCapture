@@ -157,6 +157,8 @@ class DiffusionVASWrapper:
         self.completion_pipeline = None
         self.amodal_loaded = False
         self.completion_loaded = False
+        self.depth_loaded = False  # For compatibility
+        self.default_resolution = (256, 512)  # Default resolution
         
         # Initialize checkpoint manager with token
         self.ckpt_manager = None
@@ -165,6 +167,123 @@ class DiffusionVASWrapper:
                 self.ckpt_manager = CheckpointManager(hf_token=hf_token)
             except Exception as e:
                 print(f"[VAS] Checkpoint manager init failed: {e}")
+    
+    # ========== Compatibility Methods (for SAM4DPipelineLoader) ==========
+    
+    def load_depth_model(self, model_size: str = "Large") -> bool:
+        """
+        Load depth model (compatibility method).
+        Now we use external depth or gradient fallback, so this is a no-op.
+        """
+        print(f"[VAS] Depth: Using external input or gradient fallback")
+        self.depth_loaded = False  # We don't have internal depth anymore
+        return False
+    
+    def load_amodal_pipeline(self, auto_download: bool = True) -> bool:
+        """Alias for load_amodal() - compatibility with SAM4DPipelineLoader."""
+        return self.load_amodal(auto_download=auto_download)
+    
+    def load_completion_pipeline(self, auto_download: bool = True) -> bool:
+        """Alias for load_completion() - compatibility with SAM4DPipelineLoader."""
+        return self.load_completion(auto_download=auto_download)
+    
+    def run_amodal_segmentation(
+        self,
+        images: torch.Tensor,
+        modal_masks: torch.Tensor,
+        resolution: Tuple[int, int] = None,
+        num_frames: int = 25,
+        seed: int = 23,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Run amodal segmentation (compatibility method for SAM4DPipelineLoader).
+        
+        Returns:
+            (amodal_masks, depth_maps) tuple
+        """
+        if resolution is None:
+            resolution = self.default_resolution
+        
+        # Preprocess masks
+        processed_masks, original_size = preprocess_masks(modal_masks, resolution)
+        
+        # Generate gradient depth (no internal depth model)
+        depth_pixels = estimate_depth_gradient(images, resolution)
+        
+        # Run amodal if loaded
+        if self.amodal_loaded:
+            output = self.amodal_segmentation(processed_masks, depth_pixels, resolution, num_frames, seed)
+            if output is not None:
+                amodal_masks = postprocess_masks(output, original_size)
+                # Combine with modal
+                modal_union = (modal_masks > 0.5).float()
+                amodal_masks = torch.clamp(amodal_masks + modal_union, 0, 1)
+            else:
+                amodal_masks = modal_masks
+        else:
+            amodal_masks = modal_masks
+        
+        # Convert depth for output [B, H, W]
+        depth_out = depth_pixels.squeeze(0)[:, 0, :, :]  # [B, H, W]
+        depth_out = (depth_out + 1) / 2  # [-1, 1] -> [0, 1]
+        
+        # Resize depth to original size
+        depth_out = torch.nn.functional.interpolate(
+            depth_out.unsqueeze(1),
+            size=original_size,
+            mode='bilinear',
+            align_corners=False
+        ).squeeze(1)
+        
+        return amodal_masks, depth_out
+    
+    def run_content_completion(
+        self,
+        images: torch.Tensor,
+        amodal_masks: torch.Tensor,
+        resolution: Tuple[int, int] = None,
+        num_frames: int = 25,
+        seed: int = 23,
+    ) -> torch.Tensor:
+        """
+        Run content completion (compatibility method for SAM4DAmodalCompletion).
+        
+        Returns:
+            completed_images tensor
+        """
+        if resolution is None:
+            resolution = self.default_resolution
+        
+        if not self.completion_loaded:
+            return images
+        
+        # Preprocess
+        rgb_pixels, original_size = preprocess_images(images, resolution)
+        
+        # Amodal mask tensor format
+        amodal_tensor = torch.where(
+            amodal_masks > 0.5,
+            torch.ones_like(amodal_masks),
+            -torch.ones_like(amodal_masks)
+        )
+        amodal_tensor = amodal_tensor.unsqueeze(0).unsqueeze(2).repeat(1, 1, 3, 1, 1)
+        
+        # Run completion
+        completed = self.content_completion(rgb_pixels, amodal_tensor, resolution, num_frames, seed)
+        
+        if completed is None:
+            return images
+        
+        # Postprocess
+        H, W = original_size
+        completed_np = np.array([
+            cv2.resize(f, (W, H), interpolation=cv2.INTER_LINEAR)
+            for f in completed
+        ])
+        
+        return torch.from_numpy(completed_np).float() / 255.0
+    
+    # ========== Main Methods ==========
     
     def load_amodal(self, model_id: str = None, auto_download: bool = True):
         """Load amodal segmentation pipeline."""
