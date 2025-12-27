@@ -215,7 +215,7 @@ class SAM4DBodyBatchProcess:
             }
         }
     
-    RETURN_TYPES = ("MESH_SEQUENCE", "IMAGE")
+    RETURN_TYPES = ("SAM4D_MESH_SEQUENCE", "IMAGE")
     RETURN_NAMES = ("mesh_sequence", "debug_images")
     FUNCTION = "process_batch"
     CATEGORY = "SAM4DBodyCapture/Processing"
@@ -278,12 +278,26 @@ class SAM4DBodyBatchProcess:
         else:
             per_frame_focal = None
         
-        # Collect all frame outputs
+        # Collect all frame outputs in SAM4D_MESH_SEQUENCE format
+        # This format is expected by export nodes
         mesh_sequence = {
-            "frames": [],
-            "faces": faces,
-            "num_frames": num_frames,
-            "fps": 30.0,  # Default, can be overridden
+            "vertices": [],           # List of per-frame vertices [N, 3]
+            "faces": faces,           # Shared topology [F, 3]
+            "params": {               # Per-frame parameters
+                "joint_coords": [],
+                "joint_rotations": [],
+                "camera_t": [],
+                "focal_length": [],
+                "body_pose": [],
+                "hand_pose": [],
+                "global_rot": [],
+                "shape": [],
+                "scale": [],
+            },
+            "frame_count": 0,
+            "fps": 30.0,
+            "person_ids": [0],
+            "_type": "SAM4D_MESH_SEQUENCE",
         }
         
         debug_images = []
@@ -359,37 +373,41 @@ class SAM4DBodyBatchProcess:
             
             if not outputs or len(outputs) == 0:
                 print(f"\n  Warning: SAM3DBody failed on frame {frame_idx}")
-                if len(mesh_sequence["frames"]) > 0:
-                    mesh_sequence["frames"].append(mesh_sequence["frames"][-1].copy())
+                if len(mesh_sequence["vertices"]) > 0:
+                    # Copy previous frame's data
+                    mesh_sequence["vertices"].append(mesh_sequence["vertices"][-1].copy())
+                    for key in mesh_sequence["params"]:
+                        if mesh_sequence["params"][key]:
+                            mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
+                    mesh_sequence["frame_count"] += 1
                 continue
             
             # Get the requested person (or first if not enough detected)
             output_idx = min(person_index, len(outputs) - 1)
             output = outputs[output_idx]
             
-            # Extract frame data
-            frame_data = {
-                "frame_idx": frame_idx,
-                "vertices": output.get("pred_vertices", None),
-                "joints_3d": output.get("pred_keypoints_3d", None),
-                "joint_coords": output.get("pred_joint_coords", None),
-                "joint_rotations": output.get("pred_global_rots", None),
-                "camera_t": output.get("pred_cam_t", None),
-                "focal_length": output.get("focal_length", frame_focal),
-                "bbox": output.get("bbox", None),
-                "body_pose": output.get("body_pose_params", None),
-                "hand_pose": output.get("hand_pose_params", None),
-                "global_rot": output.get("global_rot", None),
-                "shape": output.get("shape_params", None),
-                "scale": output.get("scale_params", None),
-            }
+            # Add vertices to sequence
+            vertices = output.get("pred_vertices", None)
+            if vertices is not None:
+                mesh_sequence["vertices"].append(vertices)
             
-            mesh_sequence["frames"].append(frame_data)
+            # Add parameters to sequence
+            mesh_sequence["params"]["joint_coords"].append(output.get("pred_joint_coords", None))
+            mesh_sequence["params"]["joint_rotations"].append(output.get("pred_global_rots", None))
+            mesh_sequence["params"]["camera_t"].append(output.get("pred_cam_t", None))
+            mesh_sequence["params"]["focal_length"].append(output.get("focal_length", frame_focal))
+            mesh_sequence["params"]["body_pose"].append(output.get("body_pose_params", None))
+            mesh_sequence["params"]["hand_pose"].append(output.get("hand_pose_params", None))
+            mesh_sequence["params"]["global_rot"].append(output.get("global_rot", None))
+            mesh_sequence["params"]["shape"].append(output.get("shape_params", None))
+            mesh_sequence["params"]["scale"].append(output.get("scale_params", None))
+            
+            mesh_sequence["frame_count"] += 1
             
             # Debug image (just the input for now)
             debug_images.append(img_np)
         
-        print(f"\n[SAM4DBodyCapture] Processed {len(mesh_sequence['frames'])} frames successfully")
+        print(f"\n[SAM4DBodyCapture] Processed {mesh_sequence['frame_count']} frames successfully")
         
         # Stack debug images
         debug_tensor = torch.from_numpy(
@@ -411,7 +429,7 @@ class SAM4DTemporalSmoothing:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "mesh_sequence": ("MESH_SEQUENCE", {
+                "mesh_sequence": ("SAM4D_MESH_SEQUENCE", {
                     "tooltip": "Mesh sequence from SAM4DBodyBatchProcess"
                 }),
             },
@@ -446,7 +464,7 @@ class SAM4DTemporalSmoothing:
             }
         }
     
-    RETURN_TYPES = ("MESH_SEQUENCE",)
+    RETURN_TYPES = ("SAM4D_MESH_SEQUENCE",)
     RETURN_NAMES = ("smoothed_sequence",)
     FUNCTION = "smooth_sequence"
     CATEGORY = "SAM4DBodyCapture/Processing"
@@ -456,24 +474,24 @@ class SAM4DTemporalSmoothing:
         if strength == 0 or len(data) < 2:
             return data
         
-        smoothed = []
+        # Filter out None values for processing
+        valid_indices = [i for i, d in enumerate(data) if d is not None]
+        if len(valid_indices) < 2:
+            return data
+        
+        smoothed = list(data)  # Copy original
         half_window = window // 2
         
-        for i in range(len(data)):
-            # Get window indices
-            start = max(0, i - half_window)
-            end = min(len(data), i + half_window + 1)
+        for i in valid_indices:
+            # Get window indices (only valid ones)
+            window_indices = [j for j in valid_indices if abs(j - i) <= half_window]
             
-            # Calculate weighted average
-            window_data = data[start:end]
-            if len(window_data) > 0 and window_data[0] is not None:
-                # Simple average
+            if len(window_indices) > 1:
+                # Calculate weighted average
+                window_data = [data[j] for j in window_indices]
                 avg = np.mean(np.stack(window_data, axis=0), axis=0)
                 # Blend with original based on strength
-                smoothed_val = data[i] * (1 - strength) + avg * strength
-                smoothed.append(smoothed_val)
-            else:
-                smoothed.append(data[i])
+                smoothed[i] = data[i] * (1 - strength) + avg * strength
         
         return smoothed
     
@@ -487,46 +505,43 @@ class SAM4DTemporalSmoothing:
     ):
         """Apply temporal smoothing to mesh sequence."""
         
-        frames = mesh_sequence["frames"]
-        if len(frames) < 2:
+        vertices_list = mesh_sequence.get("vertices", [])
+        if len(vertices_list) < 2:
             print("[SAM4DBodyCapture] Not enough frames for temporal smoothing")
             return (mesh_sequence,)
         
         print(f"[SAM4DBodyCapture] Applying temporal smoothing (window={smoothing_window})...")
         
-        # Extract arrays for smoothing
-        vertices_list = [f.get("vertices") for f in frames]
-        joints_list = [f.get("joint_coords") for f in frames]
-        rotations_list = [f.get("joint_rotations") for f in frames]
+        # Create a copy of the sequence
+        smoothed_sequence = {
+            "vertices": list(vertices_list),
+            "faces": mesh_sequence.get("faces"),
+            "params": {k: list(v) for k, v in mesh_sequence.get("params", {}).items()},
+            "frame_count": mesh_sequence.get("frame_count", len(vertices_list)),
+            "fps": mesh_sequence.get("fps", 30.0),
+            "person_ids": mesh_sequence.get("person_ids", []),
+            "_type": "SAM4D_MESH_SEQUENCE",
+        }
         
-        # Apply smoothing
-        if vertex_smoothing > 0 and vertices_list[0] is not None:
-            vertices_list = self._smooth_array(vertices_list, smoothing_window, vertex_smoothing)
+        # Apply vertex smoothing
+        if vertex_smoothing > 0 and len(smoothed_sequence["vertices"]) > 0:
+            smoothed_sequence["vertices"] = self._smooth_array(
+                smoothed_sequence["vertices"], smoothing_window, vertex_smoothing
+            )
         
-        if joint_smoothing > 0 and joints_list[0] is not None:
-            joints_list = self._smooth_array(joints_list, smoothing_window, joint_smoothing)
+        # Apply joint smoothing
+        if joint_smoothing > 0 and "joint_coords" in smoothed_sequence["params"]:
+            smoothed_sequence["params"]["joint_coords"] = self._smooth_array(
+                smoothed_sequence["params"]["joint_coords"], smoothing_window, joint_smoothing
+            )
         
-        # For rotations, we need special handling (slerp would be better, but average works for small changes)
-        if rotation_smoothing > 0 and rotations_list[0] is not None:
-            rotations_list = self._smooth_array(rotations_list, smoothing_window, rotation_smoothing)
+        # Apply rotation smoothing
+        if rotation_smoothing > 0 and "joint_rotations" in smoothed_sequence["params"]:
+            smoothed_sequence["params"]["joint_rotations"] = self._smooth_array(
+                smoothed_sequence["params"]["joint_rotations"], smoothing_window, rotation_smoothing
+            )
         
-        # Update frames with smoothed values
-        smoothed_frames = []
-        for i, frame in enumerate(frames):
-            smoothed_frame = frame.copy()
-            if vertices_list[i] is not None:
-                smoothed_frame["vertices"] = vertices_list[i]
-            if joints_list[i] is not None:
-                smoothed_frame["joint_coords"] = joints_list[i]
-            if rotations_list[i] is not None:
-                smoothed_frame["joint_rotations"] = rotations_list[i]
-            smoothed_frames.append(smoothed_frame)
-        
-        # Create smoothed sequence
-        smoothed_sequence = mesh_sequence.copy()
-        smoothed_sequence["frames"] = smoothed_frames
-        
-        print(f"[SAM4DBodyCapture] Temporal smoothing applied to {len(smoothed_frames)} frames")
+        print(f"[SAM4DBodyCapture] Temporal smoothing applied to {smoothed_sequence['frame_count']} frames")
         
         return (smoothed_sequence,)
 
@@ -540,7 +555,7 @@ class SAM4DMeshSequenceInfo:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "mesh_sequence": ("MESH_SEQUENCE", {
+                "mesh_sequence": ("SAM4D_MESH_SEQUENCE", {
                     "tooltip": "Mesh sequence to inspect"
                 }),
             }
@@ -555,26 +570,29 @@ class SAM4DMeshSequenceInfo:
     def get_info(self, mesh_sequence: Dict):
         """Get mesh sequence information."""
         
-        frames = mesh_sequence.get("frames", [])
+        vertices = mesh_sequence.get("vertices", [])
         faces = mesh_sequence.get("faces", None)
+        params = mesh_sequence.get("params", {})
         
         info_lines = [
             "=== Mesh Sequence Info ===",
-            f"Number of frames: {len(frames)}",
+            f"Number of frames: {mesh_sequence.get('frame_count', len(vertices))}",
             f"FPS: {mesh_sequence.get('fps', 30.0)}",
         ]
         
         if faces is not None:
             info_lines.append(f"Faces: {faces.shape[0]} triangles")
         
-        if len(frames) > 0:
-            first_frame = frames[0]
-            if first_frame.get("vertices") is not None:
-                info_lines.append(f"Vertices per frame: {first_frame['vertices'].shape[0]}")
-            if first_frame.get("joint_coords") is not None:
-                info_lines.append(f"Joints per frame: {first_frame['joint_coords'].shape[0]}")
-            if first_frame.get("focal_length") is not None:
-                info_lines.append(f"Focal length (frame 0): {first_frame['focal_length']:.1f}")
+        if len(vertices) > 0 and vertices[0] is not None:
+            info_lines.append(f"Vertices per frame: {vertices[0].shape[0]}")
+        
+        if "joint_coords" in params and params["joint_coords"] and params["joint_coords"][0] is not None:
+            info_lines.append(f"Joints per frame: {params['joint_coords'][0].shape[0]}")
+        
+        if "focal_length" in params and params["focal_length"] and params["focal_length"][0] is not None:
+            focal = params["focal_length"][0]
+            if isinstance(focal, (int, float)):
+                info_lines.append(f"Focal length (frame 0): {focal:.1f}")
         
         info = "\n".join(info_lines)
         print(info)

@@ -57,26 +57,35 @@ TRAIN:
 
 #### New Data Type
 
-- **MESH_SEQUENCE** - Container for mesh animation:
+- **SAM4D_MESH_SEQUENCE** - Compatible with existing export nodes:
   ```python
   {
-      "frames": [
-          {
-              "frame_idx": int,
-              "vertices": np.array,      # [V, 3]
-              "joint_coords": np.array,  # [J, 3]
-              "joint_rotations": np.array,
-              "camera_t": np.array,
-              "focal_length": float,
-              ...
-          },
+      "vertices": [np.array, ...],      # Per-frame vertices [V, 3]
+      "faces": np.array,                # Shared topology [F, 3]
+      "params": {
+          "joint_coords": [...],
+          "joint_rotations": [...],
+          "camera_t": [...],
+          "focal_length": [...],
+          "body_pose": [...],
           ...
-      ],
-      "faces": np.array,  # [F, 3]
-      "num_frames": int,
+      },
+      "frame_count": int,
       "fps": float,
+      "person_ids": [int],
+      "_type": "SAM4D_MESH_SEQUENCE",
   }
   ```
+
+### Direct Export Connection
+
+**No intermediate nodes needed!** SAM3DBody Batch Process outputs `SAM4D_MESH_SEQUENCE` which connects directly to Export nodes:
+
+```
+[SAM3DBody Batch Process] → SAM4D_MESH_SEQUENCE → [Export Character FBX]
+                                    ↓
+                          [Temporal Smoothing] (optional)
+```
 
 ### Full SAM-Body4D Pipeline
 
