@@ -192,11 +192,22 @@ class DiffusionVASWrapper:
         images: torch.Tensor,
         modal_masks: torch.Tensor,
         resolution: Tuple[int, int] = None,
-        num_frames: int = 25,
+        num_frames: int = None,  # Now optional, defaults to actual frame count
         seed: int = 23,
+        depth_maps: torch.Tensor = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Run amodal segmentation (compatibility method for SAM4DPipelineLoader).
+        
+        Uses SAM-Body4D approach: pass actual frame count to pipeline.
+        
+        Args:
+            images: Input images [B, H, W, C]
+            modal_masks: Modal masks [B, H, W]
+            resolution: Processing resolution (H, W)
+            num_frames: Number of frames (defaults to actual frame count)
+            seed: Random seed
+            depth_maps: Optional external depth maps [B, H, W, C]
         
         Returns:
             (amodal_masks, depth_maps) tuple
@@ -204,15 +215,56 @@ class DiffusionVASWrapper:
         if resolution is None:
             resolution = self.default_resolution
         
-        # Preprocess masks
-        processed_masks, original_size = preprocess_masks(modal_masks, resolution)
+        B = images.shape[0]
+        original_size = (images.shape[1], images.shape[2])
         
-        # Generate gradient depth (no internal depth model)
-        depth_pixels = estimate_depth_gradient(images, resolution)
+        # SAM-Body4D approach: use actual frame count
+        if num_frames is None:
+            num_frames = B
+        
+        print(f"[VAS] Amodal segmentation: {B} frames, num_frames={num_frames}")
+        
+        # Preprocess masks
+        processed_masks, _ = preprocess_masks(modal_masks, resolution)
+        
+        # Prepare depth
+        if depth_maps is not None:
+            print("[VAS] Using external depth maps")
+            # Normalize external depth to [-1, 1] for VAS
+            depth_norm = depth_maps
+            if depth_norm.dim() == 4:
+                depth_norm = depth_norm[..., 0]  # [B, H, W]
+            depth_resized = torch.nn.functional.interpolate(
+                depth_norm.unsqueeze(1),
+                size=resolution,
+                mode='bilinear',
+                align_corners=False
+            )
+            depth_pixels = depth_resized * 2 - 1  # [0,1] -> [-1,1]
+            depth_pixels = depth_pixels.repeat(1, 3, 1, 1).unsqueeze(0)  # [1, B, 3, H, W]
+            
+            # Output depth
+            depth_out = depth_maps[..., 0] if depth_maps.dim() == 4 else depth_maps
+        else:
+            print("[VAS] Using gradient depth fallback")
+            depth_pixels = estimate_depth_gradient(images, resolution)
+            depth_out = depth_pixels.squeeze(0)[:, 0, :, :]
+            depth_out = (depth_out + 1) / 2
+            depth_out = torch.nn.functional.interpolate(
+                depth_out.unsqueeze(1),
+                size=original_size,
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(1)
         
         # Run amodal if loaded
         if self.amodal_loaded:
-            output = self.amodal_segmentation(processed_masks, depth_pixels, resolution, num_frames, seed)
+            # Pass actual frame count like SAM-Body4D does
+            output = self.amodal_segmentation(
+                processed_masks, depth_pixels, resolution, 
+                num_frames=num_frames,  # Dynamic!
+                seed=seed
+            )
             if output is not None:
                 amodal_masks = postprocess_masks(output, original_size)
                 # Combine with modal
@@ -222,18 +274,6 @@ class DiffusionVASWrapper:
                 amodal_masks = modal_masks
         else:
             amodal_masks = modal_masks
-        
-        # Convert depth for output [B, H, W]
-        depth_out = depth_pixels.squeeze(0)[:, 0, :, :]  # [B, H, W]
-        depth_out = (depth_out + 1) / 2  # [-1, 1] -> [0, 1]
-        
-        # Resize depth to original size
-        depth_out = torch.nn.functional.interpolate(
-            depth_out.unsqueeze(1),
-            size=original_size,
-            mode='bilinear',
-            align_corners=False
-        ).squeeze(1)
         
         return amodal_masks, depth_out
     
@@ -562,58 +602,26 @@ class DiffusionVASAmodalSegmentation:
         wrapper = vas_pipeline["wrapper"]
         resolution = vas_pipeline["resolution"]
         
-        # Preprocess masks
-        modal_pixels, original_size = preprocess_masks(masks, resolution)
+        B = images.shape[0]
+        original_size = (images.shape[1], images.shape[2])
         
-        # Use external depth if provided, otherwise use gradient fallback
-        if depth_maps is not None:
-            print("[VAS] Using external depth maps")
-            # Convert external depth to pipeline format [1, B, 3, H, W]
-            B = depth_maps.shape[0]
-            
-            # Handle different depth formats
-            if depth_maps.dim() == 3:
-                # [B, H, W] -> add channel dim
-                depth_maps = depth_maps.unsqueeze(-1)
-            
-            if depth_maps.shape[-1] == 1:
-                # Single channel -> repeat to 3
-                depth_maps = depth_maps.repeat(1, 1, 1, 3)
-            
-            # Resize to pipeline resolution and normalize to [-1, 1]
-            depth_resized = torch.nn.functional.interpolate(
-                depth_maps.permute(0, 3, 1, 2),  # [B, C, H, W]
-                size=resolution,
-                mode='bilinear',
-                align_corners=False
-            )
-            # Normalize: assume input is [0, 1], convert to [-1, 1]
-            depth_pixels = (depth_resized * 2 - 1).unsqueeze(0)  # [1, B, 3, H, W]
-            depth_out = depth_maps  # Keep original for output
-        else:
-            print("[VAS] Using gradient depth fallback")
-            depth_pixels = estimate_depth_gradient(images, resolution)
-            # Create depth output visualization
-            depth_out = depth_pixels.squeeze(0).permute(0, 2, 3, 1)
-            depth_out = (depth_out + 1) / 2  # [-1, 1] -> [0, 1]
-            depth_out = depth_out[:, :, :, :1].repeat(1, 1, 1, 3)
-            depth_out = torch.nn.functional.interpolate(
-                depth_out.permute(0, 3, 1, 2),
-                size=original_size,
-                mode='bilinear'
-            ).permute(0, 2, 3, 1)
+        print(f"[VAS] Amodal segmentation: {B} frames, resolution={resolution}")
         
-        # Amodal segmentation
-        if wrapper.amodal_loaded:
-            output = wrapper.amodal_segmentation(modal_pixels, depth_pixels, resolution, num_frames, seed)
-            if output:
-                amodal_masks = postprocess_masks(output, original_size)
-                modal_union = (masks > 0.5).float()
-                amodal_masks = torch.clamp(amodal_masks + modal_union, 0, 1)
-            else:
-                amodal_masks = masks
-        else:
-            amodal_masks = masks
+        # Use the unified run_amodal_segmentation which has chunking support
+        amodal_masks, depth_out = wrapper.run_amodal_segmentation(
+            images=images,
+            modal_masks=masks,
+            resolution=resolution,
+            num_frames=num_frames,
+            seed=seed,
+            depth_maps=depth_maps,
+        )
+        
+        # Ensure depth output format [B, H, W, 3]
+        if depth_out.dim() == 3:
+            depth_out = depth_out.unsqueeze(-1).repeat(1, 1, 1, 3)
+        elif depth_out.shape[-1] == 1:
+            depth_out = depth_out.repeat(1, 1, 1, 3)
         
         return (amodal_masks, depth_out)
 

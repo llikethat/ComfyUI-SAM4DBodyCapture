@@ -392,13 +392,14 @@ class SAM4DOcclusionDetector:
             # Extract masks for this object
             obj_masks = (masks == obj_id).float() if masks.max() > 1 else masks.float()
             
-            # Run amodal segmentation
+            # Run amodal segmentation with external depth if available
             amodal_masks, _ = vas_wrapper.run_amodal_segmentation(
                 images=images,
                 modal_masks=obj_masks,
                 resolution=resolution,
                 num_frames=num_frames,
                 seed=seed,
+                depth_maps=depth_maps,  # Pass external depth
             )
             
             # Compute IoU per frame

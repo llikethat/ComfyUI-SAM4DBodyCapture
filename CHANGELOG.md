@@ -13,6 +13,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.11] - 2025-12-27
+
+### Fixed
+- **Dynamic Frame Count** - VAS now passes actual frame count like SAM-Body4D
+- Removed unnecessary chunking/overlap complexity
+- Videos of any length now work correctly
+
+### Technical Details
+The bug was passing `num_frames=25` (default) while providing 50 frames of data.
+SAM-Body4D solution: pass `num_frames=actual_frame_count` dynamically.
+
+```python
+# Before (wrong):
+num_frames=25  # hardcoded default
+
+# After (SAM-Body4D approach):
+num_frames=modal_pixels.shape[1]  # actual frame count
+```
+
+---
+
 ## [0.3.10] - 2025-12-27
 
 ### Fixed
