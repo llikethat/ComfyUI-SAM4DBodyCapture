@@ -207,16 +207,29 @@ class MoGe2CameraIntrinsics:
             all_depths = []
             
             for i in range(B):
-                # Convert to numpy uint8 for MoGe2 input
-                img = images[i].cpu().numpy()
-                if img.max() <= 1.0:
-                    img = (img * 255).astype(np.uint8)
+                # MoGe2 expects a torch tensor, not numpy array
+                img_tensor = images[i]  # [H, W, C] in range [0, 1]
+                
+                # Convert to [C, H, W] format and scale to [0, 255] range
+                # MoGe2 v2 expects tensor in [C, H, W] format
+                if img_tensor.dim() == 3 and img_tensor.shape[-1] == 3:
+                    # [H, W, C] -> [C, H, W]
+                    img_tensor = img_tensor.permute(2, 0, 1)
+                
+                # Scale to 0-255 if needed
+                if img_tensor.max() <= 1.0:
+                    img_tensor = img_tensor * 255.0
+                
+                # Move to correct device and dtype
+                img_tensor = img_tensor.to(self.device)
+                if hasattr(self.model, 'dtype'):
+                    img_tensor = img_tensor.to(self.model.dtype)
                 else:
-                    img = img.astype(np.uint8)
+                    img_tensor = img_tensor.half() if self.device == "cuda" else img_tensor.float()
                 
                 # Run MoGe2 inference
                 with torch.no_grad():
-                    output = self.model.infer(img)
+                    output = self.model.infer(img_tensor)
                 
                 # Extract FOV from output
                 # MoGe2 outputs: points, depth, mask, fov_x, intrinsics

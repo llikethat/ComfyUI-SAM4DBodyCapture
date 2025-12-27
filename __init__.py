@@ -12,10 +12,11 @@ Version History:
 - v0.2.0: SAM-Body4D pipeline integration
 - v0.3.0: Export nodes (FBX, Alembic, OBJ)
 - v0.4.0: MoGe2 camera intrinsics, mesh overlay visualization
+- v0.4.1: SAM3DBody integration with BFloat16 fix, batch video processing
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -176,6 +177,31 @@ except ImportError as e:
     print(f"[SAM4DBodyCapture] Visualization nodes not available: {e}")
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading Visualization nodes: {e}")
+
+# ==================== SAM3DBody Integration (v0.4.1+) ====================
+try:
+    from .nodes import sam3dbody_integration
+    
+    NODE_CLASS_MAPPINGS.update({
+        "SAM4D_SAM3DBodyLoader": sam3dbody_integration.SAM4DBodyLoader,
+        "SAM4D_SAM3DBodyBatchProcess": sam3dbody_integration.SAM4DBodyBatchProcess,
+        "SAM4D_TemporalSmoothing": sam3dbody_integration.SAM4DTemporalSmoothing,
+        "SAM4D_MeshSequenceInfo": sam3dbody_integration.SAM4DMeshSequenceInfo,
+    })
+    
+    NODE_DISPLAY_NAME_MAPPINGS.update({
+        "SAM4D_SAM3DBodyLoader": "🧍 Load SAM3DBody (Fixed)",
+        "SAM4D_SAM3DBodyBatchProcess": "🎬 SAM3DBody Batch Process",
+        "SAM4D_TemporalSmoothing": "🔄 Temporal Mesh Smoothing",
+        "SAM4D_MeshSequenceInfo": "ℹ️ Mesh Sequence Info",
+    })
+    
+    print(f"[SAM4DBodyCapture] SAM3DBody integration nodes loaded")
+    
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] SAM3DBody integration not available: {e}")
+except Exception as e:
+    print(f"[SAM4DBodyCapture] Error loading SAM3DBody integration: {e}")
 
 # ==================== Final Setup ====================
 print(f"[SAM4DBodyCapture] v{__version__} loaded {len(NODE_CLASS_MAPPINGS)} nodes")

@@ -4,30 +4,78 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.4.0-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
 
-### v0.3.0 - Export Nodes
+### v0.4.1 - SAM3DBody Integration (BFloat16 Fix!)
+- 🧍 **SAM3DBody Integration** - Full SAM-Body4D pipeline in ComfyUI
+- 🔧 **BFloat16 Fix** - Solves sparse matrix CUDA error
+- 🎬 **Batch Video Processing** - Process all frames through SAM3DBody
+- 🔄 **Temporal Smoothing** - Smooth mesh animation jitter
+- 📷 **MoGe2 → SAM3DBody** - Camera intrinsics properly passed
+
+### v0.4.0 - Camera & Visualization
+- 📷 **MoGe2 Camera** - Extract FOV/focal from images
+- 👁️ **Mesh Overlay** - Preview 3D mesh on video
+- 🎥 **Camera in FBX** - Character + camera same file
+
+### v0.3.x - Export & Chunked Processing
 - 📦 **FBX Export** - Character meshes for Maya, Blender, Unreal, Unity
 - 📦 **Alembic Export** - Point cache for VFX pipelines
-- 📦 **OBJ Sequence** - Universal per-frame mesh files
-- 🎥 **Camera Export** - FBX and JSON camera animation
-- 🌐 **Coordinate Systems** - Presets for all major 3D software
+- 🔄 **Chunked Processing** - Handle long videos without OOM
+- 🎛️ **Low VRAM Mode** - For GPUs with <16GB
 
 ### v0.2.0 - SAM4D Pipeline
-- 🎬 **Complete Pipeline** - One-click occlusion detection and completion
-- 🔍 **Smart Occlusion Detection** - IoU-based identification of hidden body parts  
+- 🎬 **Complete Pipeline** - Occlusion detection and completion
+- 🔍 **Smart Occlusion Detection** - IoU-based identification  
 - 🎭 **Amodal Completion** - Recover complete masks using diffusion priors
-- 🔄 **Temporal Fusion** - Smooth mesh sequences with Gaussian/EMA filtering
 
-### Previous Versions
-- v0.1.x - Diffusion-VAS standalone nodes
+## ⭐ Complete SAM-Body4D Workflow
 
-### Planned
-- 📦 **FBX/Alembic Export** (v0.3.0) - Skinned mesh animation export
-- 🎥 **Camera Integration** (v0.4.0) - Integration with camera solver
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    COMPLETE SAM-BODY4D PIPELINE                      │
+└─────────────────────────────────────────────────────────────────────┘
+
+[Load Video Frames]
+        │
+        ▼
+┌───────────────────────┐
+│ SAM3 Video Segmenter  │ ← Get identity-consistent masks
+│ (external ComfyUI)    │
+└───────────────────────┘
+        │
+        ▼
+┌───────────────────────┐
+│ Diffusion-VAS Amodal  │ ← Complete occluded body parts
+│ (this package)        │
+└───────────────────────┘
+        │
+        ├──────────────────────────────────────┐
+        ▼                                      ▼
+┌───────────────────────┐          ┌───────────────────────┐
+│ MoGe2 Camera          │          │ SAM3DBody (Fixed)     │
+│ Intrinsics            │ ──────── │ Batch Process         │
+│ (this package)        │  cam_int │ (this package)        │
+└───────────────────────┘          └───────────────────────┘
+                                              │
+                                              ▼
+                                   ┌───────────────────────┐
+                                   │ Temporal Smoothing    │
+                                   │ (this package)        │
+                                   └───────────────────────┘
+                                              │
+                                              ▼
+                                   ┌───────────────────────┐
+                                   │ Export Character FBX  │
+                                   │ (this package)        │
+                                   └───────────────────────┘
+                                              │
+                                              ▼
+                                        📁 animated.fbx
+```
 
 ## 📦 Installation
 
@@ -38,16 +86,45 @@ cd ComfyUI-SAM4DBodyCapture
 pip install -r requirements.txt
 ```
 
+### Dependencies
+- **ComfyUI-SAM3DBody** - Required for mesh generation
+- **MoGe2** (optional) - For camera intrinsics: `pip install git+https://github.com/microsoft/MoGe.git`
+
 ### Model Downloads (Automatic)
 Models download from HuggingFace on first use:
 
 | Model | Size | Purpose |
 |-------|------|---------|
+| SAM3DBody | ~2GB | 3D mesh from images |
 | Depth-Anything-V2-Large | ~700MB | Depth estimation |
 | diffusion-vas-amodal-segmentation | ~2GB | Amodal mask prediction |
 | diffusion-vas-content-completion | ~2GB | RGB inpainting (optional) |
 
-## 🔧 Nodes (17 Total)
+## 🔧 Nodes (21 Total)
+
+### SAM3DBody Integration (NEW in v0.4.1!)
+
+| Node | Description |
+|------|-------------|
+| 🧍 **Load SAM3DBody (Fixed)** | Load SAM3DBody with BFloat16→Float16 fix |
+| 🎬 **SAM3DBody Batch Process** | Process video frames → mesh sequence |
+| 🔄 **Temporal Mesh Smoothing** | Smooth mesh vertices/joints over time |
+| ℹ️ **Mesh Sequence Info** | Display mesh sequence information |
+
+### Camera Nodes (v0.4.0)
+
+| Node | Description |
+|------|-------------|
+| 📷 **MoGe2 Camera Intrinsics** | Extract FOV/focal from images |
+| 📷 **Camera from FOV** | Manual intrinsics from known FOV |
+| 📷 **Camera Info** | Display camera intrinsics |
+
+### Visualization Nodes (v0.4.0)
+
+| Node | Description |
+|------|-------------|
+| 👁️ **Mesh Overlay Preview** | Render 3D mesh on video |
+| 👁️ **Depth Overlay Preview** | Visualize depth maps |
 
 ### SAM4D Pipeline Nodes
 
@@ -63,7 +140,7 @@ Models download from HuggingFace on first use:
 | Node | Description |
 |------|-------------|
 | 🔄 **Temporal Fusion** | Smooth vertex/parameter jitter |
-| ✨ **Create Mesh Sequence** | Build sequence from SAM3DBody `mesh_data` (SAM3D_OUTPUT) |
+| ✨ **Create Mesh Sequence** | Build sequence from SAM3DBody output |
 | 👁️ **Visualize Mesh Sequence** | Preview mesh as point cloud |
 | 📦 **Export Mesh Sequence** | NPZ compressed format |
 
@@ -71,11 +148,10 @@ Models download from HuggingFace on first use:
 
 | Node | Description |
 |------|-------------|
-| 📦 **Export Character FBX** | Animated FBX via Blender (Maya, Blender, Unreal) |
+| 📦 **Export Character FBX** | Animated FBX via Blender |
 | 📦 **Export Character Alembic** | Point cache for VFX pipelines |
 | 🎥 **Export Camera FBX** | Camera animation FBX |
 | 🎥 **Export Camera JSON** | Universal camera format |
-| 🎥 **FBX Animation Viewer** | Interactive 3D viewer in ComfyUI |
 
 ### Diffusion-VAS Nodes (Standalone)
 
@@ -85,6 +161,59 @@ Models download from HuggingFace on first use:
 | 🎭 **Amodal Segmentation** | Generate complete masks |
 | 🎭 **Content Completion** | Inpaint occluded RGB |
 | 🎭 **Unload VAS Models** | Free VAS memory |
+
+## 🔧 BFloat16 Fix (Why This Package Exists!)
+
+The original **ComfyUI-SAM3DBody** crashes with this error:
+
+```
+RuntimeError: "addmm_sparse_cuda" not implemented for 'BFloat16'
+```
+
+**Root Cause:** SAM3DBody's config uses `bfloat16`, but PyTorch's sparse CUDA operations only support `float16`/`float32`.
+
+**Our Fix:** The `Load SAM3DBody (Fixed)` node overrides the dtype:
+
+```yaml
+# Original SAM3DBody config (broken):
+TRAIN:
+  FP16_TYPE: bfloat16  # ← Causes sparse matrix error!
+
+# Our fix:
+TRAIN:
+  FP16_TYPE: float16   # ← Works!
+```
+
+This is the ONLY change needed - everything else works identically.
+
+## 📷 MoGe2 → SAM3DBody Connection
+
+SAM-Body4D uses MoGe2 to estimate camera intrinsics, which improves 3D reconstruction accuracy:
+
+```
+┌─────────────────────┐
+│ MoGe2 Camera        │
+│ Intrinsics          │
+└─────────────────────┘
+         │
+         │  CAMERA_INTRINSICS dict:
+         │  {
+         │    "focal_length": 1234.5,
+         │    "fov_x": 65.0,
+         │    "cx": 960.0,
+         │    "cy": 540.0,
+         │    "per_frame_focal": [...]
+         │  }
+         │
+         ▼
+┌─────────────────────┐
+│ SAM3DBody Batch     │ ← Converts to 3x3 intrinsic matrix:
+│ Process             │   [[fx, 0, cx],
+└─────────────────────┘    [0, fy, cy],
+                           [0,  0,  1]]
+```
+
+Without MoGe2, SAM3DBody uses a default FOV (~60°), which may not match your camera.
 
 ## 🔀 Two Loader Options (Fully Compatible)
 

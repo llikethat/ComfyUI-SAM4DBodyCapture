@@ -13,6 +13,107 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.1] - 2025-12-28
+
+### Added - SAM3DBody Integration
+
+#### BFloat16 Fix
+The original SAM3DBody uses `bfloat16` which doesn't work with sparse CUDA operations:
+```
+RuntimeError: "addmm_sparse_cuda" not implemented for 'BFloat16'
+```
+
+**Solution:** New integrated loader forces `float16` instead of `bfloat16`:
+```yaml
+# Original config (broken):
+TRAIN:
+  FP16_TYPE: bfloat16  # ← Sparse ops fail!
+
+# Our fix:
+TRAIN:
+  FP16_TYPE: float16   # ← Works!
+```
+
+#### New Nodes
+
+- **🧍 Load SAM3DBody (Fixed)** - Loads SAM3DBody with dtype fix
+  - `force_fp16=True` by default (fixes sparse matrix error)
+  - Auto-downloads from HuggingFace if token provided
+  - Caches model for reuse
+  
+- **🎬 SAM3DBody Batch Process** - Process all video frames
+  - Loops through each frame calling SAM3DBody
+  - Collects mesh vertices, joints, rotations per frame
+  - Accepts optional camera intrinsics from MoGe2
+  - Returns `MESH_SEQUENCE` type
+  
+- **🔄 Temporal Mesh Smoothing** - Smooth mesh sequences
+  - Vertex smoothing (reduces vertex jitter)
+  - Joint smoothing (smoother joint positions)  
+  - Rotation smoothing (smoother joint rotations)
+  - Configurable window size and strength
+  
+- **ℹ️ Mesh Sequence Info** - Display sequence information
+
+#### New Data Type
+
+- **MESH_SEQUENCE** - Container for mesh animation:
+  ```python
+  {
+      "frames": [
+          {
+              "frame_idx": int,
+              "vertices": np.array,      # [V, 3]
+              "joint_coords": np.array,  # [J, 3]
+              "joint_rotations": np.array,
+              "camera_t": np.array,
+              "focal_length": float,
+              ...
+          },
+          ...
+      ],
+      "faces": np.array,  # [F, 3]
+      "num_frames": int,
+      "fps": float,
+  }
+  ```
+
+### Full SAM-Body4D Pipeline
+
+The complete pipeline is now possible:
+
+```
+[Load Video Frames]
+        ↓
+[SAM3 Video Segmentation] → Get masks for person
+        ↓
+[Diffusion-VAS Amodal] → Complete occluded regions
+        ↓
+[MoGe2 Camera] → Get camera intrinsics
+        ↓
+[SAM3DBody Batch Process] → Mesh per frame (with BFloat16 fix!)
+        ↓
+[Temporal Mesh Smoothing] → Smooth animation
+        ↓
+[Export Character FBX] → Animated character
+```
+
+### Technical Details
+
+**Why BFloat16 fails:**
+- SAM3DBody's MHR head uses sparse matrix operations
+- PyTorch's `addmm_sparse_cuda` only supports `float16` and `float32`
+- The original config sets `FP16_TYPE: bfloat16`
+- Our loader overrides this to `float16`
+
+**Sparse operations in MHR:**
+```python
+# In mhr_head.py, the keypoint_mapping uses sparse matrices
+model_keypoints_pred = self.keypoint_mapping @ model_vert_joints
+```
+
+---
+
 ## [0.4.0] - 2025-12-28
 
 ### Added - Camera & Visualization
