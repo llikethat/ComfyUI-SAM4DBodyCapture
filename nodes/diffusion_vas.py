@@ -195,13 +195,14 @@ class DiffusionVASWrapper:
         num_frames: int = None,  # Now optional, defaults to actual frame count
         seed: int = 23,
         depth_maps: torch.Tensor = None,
-        max_chunk_size: int = 25,  # Process in chunks to avoid OOM
+        max_chunk_size: int = 12,  # Process in chunks to avoid OOM
+        overlap: int = 4,  # Overlap frames for smooth transitions
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Run amodal segmentation (compatibility method for SAM4DPipelineLoader).
         
         Uses SAM-Body4D approach: pass actual frame count to pipeline.
-        For long videos, automatically chunks to avoid OOM.
+        For long videos, automatically chunks with overlap for smooth transitions.
         
         Args:
             images: Input images [B, H, W, C]
@@ -211,6 +212,7 @@ class DiffusionVASWrapper:
             seed: Random seed
             depth_maps: Optional external depth maps [B, H, W, C]
             max_chunk_size: Maximum frames per chunk (default 25)
+            overlap: Overlap frames between chunks (default 4)
         
         Returns:
             (amodal_masks, depth_maps) tuple
@@ -247,6 +249,9 @@ class DiffusionVASWrapper:
         if not self.amodal_loaded:
             return modal_masks, depth_out
         
+        # Ensure overlap doesn't exceed reasonable bounds
+        actual_overlap = min(overlap, max_chunk_size // 4) if overlap > 0 else 0
+        
         # Check if we need chunking
         if B <= max_chunk_size:
             # Process all at once
@@ -254,35 +259,119 @@ class DiffusionVASWrapper:
                 images, modal_masks, depth_maps, resolution, B, seed, original_size
             )
         else:
-            # Process in chunks
-            print(f"[VAS] Chunking: {B} frames into chunks of {max_chunk_size}")
-            all_amodal = []
-            
-            for start in range(0, B, max_chunk_size):
-                end = min(start + max_chunk_size, B)
-                chunk_size = end - start
-                
-                print(f"[VAS] Processing chunk {start}-{end} ({chunk_size} frames)")
-                
-                # Extract chunk
-                chunk_images = images[start:end]
-                chunk_masks = modal_masks[start:end]
-                chunk_depth = depth_maps[start:end] if depth_maps is not None else None
-                
-                # Process chunk
-                chunk_amodal = self._process_amodal_chunk(
-                    chunk_images, chunk_masks, chunk_depth, 
-                    resolution, chunk_size, seed + start, original_size
-                )
-                all_amodal.append(chunk_amodal)
-                
-                # Clear cache between chunks
-                torch.cuda.empty_cache()
-            
-            # Concatenate all chunks
-            amodal_masks = torch.cat(all_amodal, dim=0)
+            # Process in overlapping chunks for smooth transitions
+            print(f"[VAS] Chunking: {B} frames into chunks of {max_chunk_size} with {actual_overlap} frame overlap")
+            amodal_masks = self._process_chunks_with_overlap(
+                images, modal_masks, depth_maps, resolution, 
+                max_chunk_size, actual_overlap, seed, original_size
+            )
         
         return amodal_masks, depth_out
+    
+    def _process_chunks_with_overlap(
+        self,
+        images: torch.Tensor,
+        modal_masks: torch.Tensor,
+        depth_maps: Optional[torch.Tensor],
+        resolution: Tuple[int, int],
+        chunk_size: int,
+        overlap: int,
+        seed: int,
+        original_size: Tuple[int, int],
+    ) -> torch.Tensor:
+        """
+        Process video in overlapping chunks with blended transitions.
+        
+        Strategy:
+        - Process chunks with 'overlap' frames of overlap
+        - Blend overlapping regions using linear crossfade
+        - This ensures smooth temporal transitions between chunks
+        """
+        B = images.shape[0]
+        device = images.device
+        
+        # Calculate step size (how much to advance after each chunk)
+        step = chunk_size - overlap
+        
+        # Initialize output
+        amodal_masks = torch.zeros(B, *original_size, device=device)
+        weights = torch.zeros(B, device=device)  # Track blend weights
+        
+        chunk_idx = 0
+        start = 0
+        
+        while start < B:
+            end = min(start + chunk_size, B)
+            actual_chunk_size = end - start
+            
+            print(f"[VAS] Processing chunk {chunk_idx}: frames {start}-{end-1} ({actual_chunk_size} frames)")
+            
+            # Extract chunk
+            chunk_images = images[start:end]
+            chunk_masks = modal_masks[start:end]
+            chunk_depth = depth_maps[start:end] if depth_maps is not None else None
+            
+            # Process chunk
+            chunk_amodal = self._process_amodal_chunk(
+                chunk_images, chunk_masks, chunk_depth,
+                resolution, actual_chunk_size, seed + start, original_size
+            )
+            
+            # Blend into output with linear crossfade in overlap regions
+            for i, frame_idx in enumerate(range(start, end)):
+                # Calculate blend weight for this frame
+                if start == 0:
+                    # First chunk: full weight except fade out at end
+                    if i >= actual_chunk_size - overlap and end < B:
+                        # Fade out region
+                        fade_pos = i - (actual_chunk_size - overlap)
+                        weight = 1.0 - (fade_pos / overlap)
+                    else:
+                        weight = 1.0
+                elif end >= B:
+                    # Last chunk: fade in at start, full weight rest
+                    if i < overlap:
+                        # Fade in region
+                        weight = i / overlap
+                    else:
+                        weight = 1.0
+                else:
+                    # Middle chunks: fade in at start, fade out at end
+                    if i < overlap:
+                        # Fade in
+                        weight = i / overlap
+                    elif i >= actual_chunk_size - overlap:
+                        # Fade out
+                        fade_pos = i - (actual_chunk_size - overlap)
+                        weight = 1.0 - (fade_pos / overlap)
+                    else:
+                        weight = 1.0
+                
+                # Accumulate weighted result
+                amodal_masks[frame_idx] += chunk_amodal[i] * weight
+                weights[frame_idx] += weight
+            
+            # Clear cache between chunks
+            torch.cuda.empty_cache()
+            
+            # Move to next chunk
+            start += step
+            chunk_idx += 1
+            
+            # Safety check to avoid infinite loop
+            if step <= 0:
+                break
+        
+        # Normalize by total weights
+        weights = weights.view(-1, 1, 1).clamp(min=1e-6)
+        amodal_masks = amodal_masks / weights
+        
+        # Threshold back to binary (0 or 1)
+        amodal_masks = (amodal_masks > 0.5).float()
+        
+        print(f"[VAS] Processed {chunk_idx} chunks with overlap blending")
+        
+        return amodal_masks
     
     def _process_amodal_chunk(
         self,
@@ -295,6 +384,12 @@ class DiffusionVASWrapper:
         original_size: Tuple[int, int],
     ) -> torch.Tensor:
         """Process a single chunk of frames through amodal segmentation."""
+        
+        # Log VRAM before processing
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            reserved = torch.cuda.memory_reserved() / 1024**3
+            print(f"[VAS] VRAM before chunk: {allocated:.2f}GB allocated, {reserved:.2f}GB reserved")
         
         # Preprocess masks for this chunk
         processed_masks, _ = preprocess_masks(modal_masks, resolution)
@@ -630,8 +725,9 @@ class DiffusionVASAmodalSegmentation:
     
     If no depth provided, uses gradient fallback.
     
-    For long videos (>25 frames), automatically processes in chunks
-    to avoid GPU memory issues.
+    For long videos (>chunk_size frames), automatically processes in 
+    overlapping chunks with blended transitions to avoid GPU memory 
+    issues and maintain temporal consistency.
     """
     
     @classmethod
@@ -653,10 +749,16 @@ class DiffusionVASAmodalSegmentation:
                     "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
                 }),
                 "chunk_size": ("INT", {
-                    "default": 25,
-                    "min": 4,
+                    "default": 12,
+                    "min": 8,
                     "max": 64,
                     "tooltip": "Max frames per chunk. Lower if OOM, higher if you have VRAM."
+                }),
+                "overlap": ("INT", {
+                    "default": 4,
+                    "min": 0,
+                    "max": 16,
+                    "tooltip": "Overlap frames between chunks for smooth transitions. 0 = no blending."
                 }),
                 "seed": ("INT", {"default": 23}),
             }
@@ -667,7 +769,7 @@ class DiffusionVASAmodalSegmentation:
     FUNCTION = "segment"
     CATEGORY = "SAM4DBodyCapture/VAS"
     
-    def segment(self, vas_pipeline, images, masks, depth_maps=None, num_frames=0, chunk_size=25, seed=23):
+    def segment(self, vas_pipeline, images, masks, depth_maps=None, num_frames=0, chunk_size=12, overlap=4, seed=23):
         wrapper = vas_pipeline["wrapper"]
         resolution = vas_pipeline["resolution"]
         
@@ -677,7 +779,7 @@ class DiffusionVASAmodalSegmentation:
         # num_frames=0 means auto (use actual frame count) - SAM-Body4D approach
         actual_num_frames = B if num_frames == 0 else num_frames
         
-        print(f"[VAS] Amodal segmentation: {B} frames, num_frames={actual_num_frames}, chunk_size={chunk_size}")
+        print(f"[VAS] Amodal segmentation: {B} frames, num_frames={actual_num_frames}, chunk_size={chunk_size}, overlap={overlap}")
         
         # Use the unified run_amodal_segmentation which has chunking support
         amodal_masks, depth_out = wrapper.run_amodal_segmentation(
@@ -688,6 +790,7 @@ class DiffusionVASAmodalSegmentation:
             seed=seed,
             depth_maps=depth_maps,
             max_chunk_size=chunk_size,
+            overlap=overlap,
         )
         
         # Ensure depth output format [B, H, W, 3]

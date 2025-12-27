@@ -4,7 +4,7 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.3.13-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.3.15-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
@@ -271,6 +271,8 @@ MIT License - see [LICENSE](LICENSE)
 - [x] v0.3.11 - Chunked processing for long videos
 - [x] v0.3.12 - Fixed num_frames auto-detection (SAM-Body4D approach)
 - [x] v0.3.13 - Chunked processing with adjustable chunk_size (OOM fix)
+- [x] v0.3.14 - Overlap blending for smooth chunk transitions
+- [x] v0.3.15 - Reduced default chunk_size to 12, added VRAM logging
 - [ ] v0.4.0 - Remove standalone VAS, camera solver integration  
 - [ ] v1.0.0 - Stable release
 

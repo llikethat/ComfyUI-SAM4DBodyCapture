@@ -13,6 +13,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.15] - 2025-12-27
+
+### Changed
+- **Reduced default chunk_size from 25 to 12** - More conservative default for GPUs with limited VRAM
+- Added VRAM logging before each chunk processing to help diagnose memory issues
+
+### VRAM Guidelines
+The Diffusion-VAS model (based on SVD) is very memory-hungry. Use these settings based on your GPU:
+
+| VRAM | chunk_size | Notes |
+|------|------------|-------|
+| 8GB | 4-6 | May still struggle, use 256x512 resolution |
+| 12GB | 8-10 | Conservative |
+| 16GB | 12 (default) | Safe for most cases |
+| 24GB | 16-20 | Comfortable |
+| 32GB+ | 20-25 | Maximum efficiency |
+
+### If You Still Get OOM
+1. Reduce `chunk_size` to 8 or even 6
+2. Use lower resolution (256x512 instead of 512x1024)
+3. Close other GPU applications
+4. Try `overlap=0` to reduce redundant processing
+
+### Expected Log Output
+```
+[VAS] Chunking: 50 frames into chunks of 12 with 4 frame overlap
+[VAS] Processing chunk 0: frames 0-11 (12 frames)
+[VAS] VRAM before chunk: 5.50GB allocated, 6.00GB reserved
+...
+```
+
+---
+
+## [0.3.14] - 2025-12-27
+
+### Added
+- **Overlap Blending** - Chunks now overlap for smooth temporal transitions
+- **`overlap` parameter** - Adjustable overlap frames (default 4, range 0-16) for all VAS/SAM4D nodes
+- Linear crossfade blending in overlap regions prevents "seams" between chunks
+
+### How Overlap Works
+With `chunk_size=25` and `overlap=4` processing 50 frames:
+
+```
+Chunk 0: frames 0-24  (25 frames)
+  └── Keep: 0-20, Fade out: 21-24
+  
+Chunk 1: frames 21-45 (25 frames) 
+  └── Fade in: 21-24, Keep: 25-41, Fade out: 42-45
+  
+Chunk 2: frames 42-49 (8 frames)
+  └── Fade in: 42-45, Keep: 46-49
+
+Result: Smooth blended masks across all 50 frames
+```
+
+### Blending Strategy
+- **Fade in**: First `overlap` frames of each chunk (except first chunk)
+- **Fade out**: Last `overlap` frames of each chunk (except last chunk)
+- **Linear weights**: Crossfade using position-based weights
+- **Threshold**: Final masks thresholded at 0.5 back to binary
+
+### Parameters
+| Parameter | Default | Range | Purpose |
+|-----------|---------|-------|---------|
+| `overlap` | 4 | 0-16 | Frames to blend between chunks |
+
+Set `overlap=0` to disable blending (hard cuts between chunks).
+
+---
+
 ## [0.3.13] - 2025-12-27
 
 ### Added
