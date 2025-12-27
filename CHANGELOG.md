@@ -8,8 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned for v0.4.0
-- Integration with SAM3DBody2abc v4.0.0 camera solver
-- Hybrid workflow combining SAM4D with external camera solves
+- Remove standalone VAS nodes (consolidate to SAM4D pipeline only)
+- Camera solver integration
+
+---
+
+## [0.3.9] - 2025-12-27
+
+### Fixed
+- **Critical: VAS Model Loading** - Fixed `No module named 'models.diffusion_vas'` error
+- Added module alias registration so HuggingFace checkpoints can find our custom UNet class
+- The downloaded VAS models now load correctly
+
+### Technical Details
+The HuggingFace VAS checkpoints reference `models.diffusion_vas.UNetDiffusionVAS` but our code is in `lib/diffusion_vas/`. The fix registers a module alias before loading.
 
 ---
 

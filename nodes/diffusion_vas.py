@@ -285,12 +285,59 @@ class DiffusionVASWrapper:
     
     # ========== Main Methods ==========
     
+    def _register_vas_modules(self):
+        """
+        Register our local VAS modules under the path expected by HuggingFace checkpoints.
+        
+        The HF checkpoints reference 'models.diffusion_vas' but our code is in 'lib/diffusion_vas'.
+        This creates a module alias so from_pretrained() can find our custom classes.
+        """
+        import sys
+        import types
+        
+        # Get our local diffusion_vas module
+        _current_dir = os.path.dirname(os.path.abspath(__file__))
+        _lib_dir = os.path.join(os.path.dirname(_current_dir), "lib")
+        
+        if _lib_dir not in sys.path:
+            sys.path.insert(0, _lib_dir)
+        
+        # Import our local modules
+        from diffusion_vas import pipeline_diffusion_vas, unet_diffusion_vas
+        
+        # Create fake 'models' package if it doesn't exist
+        if 'models' not in sys.modules:
+            models_module = types.ModuleType('models')
+            sys.modules['models'] = models_module
+        
+        # Register our diffusion_vas under models.diffusion_vas
+        if 'models.diffusion_vas' not in sys.modules:
+            # Create a combined module that has both pipeline and unet
+            combined_module = types.ModuleType('models.diffusion_vas')
+            
+            # Copy all attributes from both modules
+            for attr in dir(pipeline_diffusion_vas):
+                if not attr.startswith('_'):
+                    setattr(combined_module, attr, getattr(pipeline_diffusion_vas, attr))
+            
+            for attr in dir(unet_diffusion_vas):
+                if not attr.startswith('_'):
+                    setattr(combined_module, attr, getattr(unet_diffusion_vas, attr))
+            
+            sys.modules['models.diffusion_vas'] = combined_module
+            sys.modules['models'].diffusion_vas = combined_module
+            
+            print("[VAS] Registered models.diffusion_vas module alias")
+    
     def load_amodal(self, model_id: str = None, auto_download: bool = True):
         """Load amodal segmentation pipeline."""
         if not LOCAL_VAS_AVAILABLE:
             print("[VAS] Local pipeline required but not available")
             print("[VAS] Ensure lib/diffusion_vas/ contains pipeline files")
             return False
+        
+        # Register module alias so HF checkpoint can find our custom classes
+        self._register_vas_modules()
         
         # Try checkpoint manager first
         local_path = None
@@ -321,6 +368,9 @@ class DiffusionVASWrapper:
         """Load content completion pipeline."""
         if not LOCAL_VAS_AVAILABLE:
             return False
+        
+        # Register module alias so HF checkpoint can find our custom classes
+        self._register_vas_modules()
         
         # Try checkpoint manager first
         local_path = None

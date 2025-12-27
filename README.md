@@ -4,7 +4,7 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.3.8-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.3.9-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
@@ -266,7 +266,8 @@ MIT License - see [LICENSE](LICENSE)
 - [x] v0.3.6 - HuggingFace token support
 - [x] v0.3.7 - Pipeline compatibility fixes
 - [x] v0.3.8 - Unified pipeline types (SAM4D/VAS interchangeable)
-- [ ] v0.4.0 - Camera solver integration  
+- [x] v0.3.9 - VAS model loading fix (module alias)
+- [ ] v0.4.0 - Remove standalone VAS, camera solver integration  
 - [ ] v1.0.0 - Stable release
 
 ## 🙏 Acknowledgments
