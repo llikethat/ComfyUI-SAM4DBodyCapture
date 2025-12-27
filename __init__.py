@@ -11,11 +11,11 @@ Version History:
 - v0.1.1: Diffusion-VAS with depth estimation
 - v0.2.0: SAM-Body4D pipeline integration
 - v0.3.0: Export nodes (FBX, Alembic, OBJ)
-- v0.4.0: (Planned) Camera solver integration
+- v0.4.0: MoGe2 camera intrinsics, mesh overlay visualization
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.3.15"
+__version__ = "0.4.0"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -132,6 +132,50 @@ except ImportError as e:
     print(f"[SAM4DBodyCapture] Export nodes not available: {e}")
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading Export nodes: {e}")
+
+# ==================== Camera Nodes (v0.4.0+) ====================
+try:
+    from .nodes import moge2_camera
+    
+    NODE_CLASS_MAPPINGS.update({
+        "SAM4D_MoGe2CameraIntrinsics": moge2_camera.MoGe2CameraIntrinsics,
+        "SAM4D_CameraIntrinsicsFromFOV": moge2_camera.CameraIntrinsicsFromFOV,
+        "SAM4D_CameraIntrinsicsInfo": moge2_camera.CameraIntrinsicsInfo,
+    })
+    
+    NODE_DISPLAY_NAME_MAPPINGS.update({
+        "SAM4D_MoGe2CameraIntrinsics": "📷 MoGe2 Camera Intrinsics",
+        "SAM4D_CameraIntrinsicsFromFOV": "📷 Camera from FOV",
+        "SAM4D_CameraIntrinsicsInfo": "📷 Camera Info",
+    })
+    
+    print(f"[SAM4DBodyCapture] Camera nodes loaded")
+    
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] Camera nodes not available: {e}")
+except Exception as e:
+    print(f"[SAM4DBodyCapture] Error loading Camera nodes: {e}")
+
+# ==================== Visualization Nodes (v0.4.0+) ====================
+try:
+    from .nodes import mesh_overlay
+    
+    NODE_CLASS_MAPPINGS.update({
+        "SAM4D_MeshOverlay": mesh_overlay.SAM4DMeshOverlay,
+        "SAM4D_DepthOverlay": mesh_overlay.SAM4DDepthOverlay,
+    })
+    
+    NODE_DISPLAY_NAME_MAPPINGS.update({
+        "SAM4D_MeshOverlay": "👁️ Mesh Overlay Preview",
+        "SAM4D_DepthOverlay": "👁️ Depth Overlay Preview",
+    })
+    
+    print(f"[SAM4DBodyCapture] Visualization nodes loaded")
+    
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] Visualization nodes not available: {e}")
+except Exception as e:
+    print(f"[SAM4DBodyCapture] Error loading Visualization nodes: {e}")
 
 # ==================== Final Setup ====================
 print(f"[SAM4DBodyCapture] v{__version__} loaded {len(NODE_CLASS_MAPPINGS)} nodes")

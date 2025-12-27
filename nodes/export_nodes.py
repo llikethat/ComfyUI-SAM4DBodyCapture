@@ -532,7 +532,9 @@ class SAM4DExportCharacterFBX:
     Creates an animated FBX with:
     - Mesh with shape keys (vertex animation)
     - Skeleton with keyframes
+    - Camera with intrinsics (optional)
     
+    Camera and character are exported in the SAME file for easy handling.
     Compatible with Maya, Blender, Unreal, Unity, 3ds Max.
     """
     
@@ -549,9 +551,21 @@ class SAM4DExportCharacterFBX:
                 }),
             },
             "optional": {
+                "camera_intrinsics": ("CAMERA_INTRINSICS", {
+                    "tooltip": "Camera intrinsics from MoGe2 or manual input"
+                }),
                 "coordinate_system": (cls.COORD_SYSTEMS, {"default": "Y-up (Maya/Blender)"}),
                 "fps": ("FLOAT", {"default": 30.0, "min": 1.0, "max": 120.0}),
-                "include_camera": ("BOOLEAN", {"default": False}),
+                "include_camera": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Include camera in FBX (recommended)"
+                }),
+                "sensor_width": ("FLOAT", {
+                    "default": 36.0,
+                    "min": 1.0,
+                    "max": 100.0,
+                    "tooltip": "Camera sensor width in mm (35mm = 36mm)"
+                }),
             }
         }
     
@@ -565,9 +579,11 @@ class SAM4DExportCharacterFBX:
         self,
         mesh_sequence: dict,
         filename: str = "sam4d_animation",
+        camera_intrinsics: dict = None,
         coordinate_system: str = "Y-up (Maya/Blender)",
         fps: float = 30.0,
-        include_camera: bool = False,
+        include_camera: bool = True,
+        sensor_width: float = 36.0,
     ):
         seq = SAM4DMeshSequence.from_dict(mesh_sequence)
         
@@ -591,12 +607,35 @@ class SAM4DExportCharacterFBX:
         # Build JSON for Blender script
         up_axis = "Y" if "Y-up" in coordinate_system else "Z"
         
+        # Get camera intrinsics
+        focal_length = None
+        image_width = 1920
+        image_height = 1080
+        
+        if camera_intrinsics:
+            focal_length = camera_intrinsics.get("focal_length")
+            image_width = camera_intrinsics.get("width", 1920)
+            image_height = camera_intrinsics.get("height", 1080)
+            print(f"[SAM4D Export] Using camera intrinsics: focal={focal_length:.1f}px, size={image_width}x{image_height}")
+        
         frames_data = []
         for i, vertices in enumerate(seq.vertices):
             frame_data = {
                 "frame_index": i,
                 "vertices": vertices.tolist() if isinstance(vertices, np.ndarray) else vertices,
+                "image_size": [image_width, image_height],
             }
+            
+            # Add focal length per frame if available
+            if camera_intrinsics and "per_frame_focal" in camera_intrinsics:
+                per_frame = camera_intrinsics["per_frame_focal"]
+                if i < len(per_frame):
+                    frame_data["focal_length"] = per_frame[i]
+                elif focal_length:
+                    frame_data["focal_length"] = focal_length
+            elif focal_length:
+                frame_data["focal_length"] = focal_length
+            
             if seq.params and i < len(seq.params):
                 params = seq.params[i]
                 if isinstance(params, dict):
@@ -606,6 +645,9 @@ class SAM4DExportCharacterFBX:
                     if 'joint_rotations' in params:
                         jr = params['joint_rotations']
                         frame_data['joint_rotations'] = jr.tolist() if hasattr(jr, 'tolist') else jr
+                    if 'pred_cam_t' in params:
+                        pct = params['pred_cam_t']
+                        frame_data['pred_cam_t'] = pct.tolist() if hasattr(pct, 'tolist') else pct
             frames_data.append(frame_data)
         
         export_data = {
@@ -613,8 +655,9 @@ class SAM4DExportCharacterFBX:
             "frame_count": seq.frame_count,
             "faces": seq.faces.tolist() if seq.faces is not None else None,
             "frames": frames_data,
-            "world_translation_mode": "none",
+            "world_translation_mode": "root",  # Character at origin
             "skeleton_mode": "positions",
+            "sensor_width": sensor_width,
         }
         
         # Write temp JSON
@@ -636,6 +679,7 @@ class SAM4DExportCharacterFBX:
             ]
             
             print(f"[SAM4D Export] Exporting {seq.frame_count} frames to FBX...")
+            print(f"[SAM4D Export] Include camera: {include_camera}")
             print(f"[SAM4D Export] Output: {output_path}")
             
             result = subprocess.run(

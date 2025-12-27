@@ -7,9 +7,117 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v0.4.0
-- Remove standalone VAS nodes (consolidate to SAM4D pipeline only)
-- Camera solver integration
+### Planned for v0.5.0
+- Body joint tracking using SAM-Body4D exact method
+- Improved mesh quality
+
+---
+
+## [0.4.0] - 2025-12-28
+
+### Added - Camera & Visualization
+
+#### MoGe2 Camera Intrinsics
+Following SAM-Body4D approach, added MoGe2 integration for camera intrinsics:
+
+- **MoGe2 Camera Intrinsics** node - Extracts FOV and focal length from images
+  - Uses MoGe2 (Microsoft's monocular geometry estimation)
+  - Formula: `focal_px = (image_width / 2) / tan(fov_x * pi / 180 / 2)`
+  - Supports per-frame focal length for varying zoom
+  - Outputs depth maps as bonus
+  
+- **Camera from FOV** node - Manual intrinsics from known FOV
+  - For when you know your camera's FOV (e.g., iPhone ~70°, GoPro ~120°)
+  
+- **Camera Info** node - Display intrinsics information
+
+#### Mesh Overlay Visualization
+Preview 3D mesh alignment on original images:
+
+- **Mesh Overlay Preview** node
+  - Wireframe, solid, or skeleton render modes
+  - Adjustable color, alpha, and line thickness
+  - Uses camera intrinsics for proper projection
+  
+- **Depth Overlay Preview** node
+  - Visualize depth maps with colormaps (viridis, plasma, jet, etc.)
+  - Adjustable blend alpha
+
+#### FBX Export Improvements
+- Camera intrinsics now passed to FBX export
+- Camera + character exported in **same FBX file** by default
+- `include_camera` now defaults to `True`
+- Added `sensor_width` parameter (default 36mm for 35mm equivalent)
+
+### Changed
+- Export node accepts `CAMERA_INTRINSICS` input for proper camera setup
+- `world_translation_mode` defaults to `"root"` (character at origin)
+
+### How to Use v0.4.0
+
+**Basic Pipeline:**
+```
+[Load Video] → [SAM3 Segmentation] → [Diffusion-VAS Amodal] 
+                                            ↓
+                    [MoGe2 Camera] → [SAM3DBody Mesh] 
+                                            ↓
+                                    [Mesh Overlay Preview]
+                                            ↓
+                                    [Export Character FBX]
+```
+
+**Verify Alignment:**
+1. Run MoGe2 Camera Intrinsics on your video
+2. Connect camera_intrinsics to Mesh Overlay Preview
+3. Check that mesh aligns with person in video
+4. If good, export to FBX with same intrinsics
+
+**Common FOV Values:**
+| Camera | Horizontal FOV |
+|--------|---------------|
+| iPhone (standard) | ~70° |
+| GoPro (wide) | ~120° |
+| DSLR 50mm | ~40° |
+| Webcam | ~60-90° |
+
+---
+
+## [0.3.16] - 2025-12-27
+
+### Added
+- **LOW VRAM MODE** - New option in VAS Loader for GPUs with <16GB VRAM
+  - Uses `enable_sequential_cpu_offload()` instead of `enable_model_cpu_offload()`
+  - Much slower but uses significantly less GPU memory
+  - Enabled by default for safety
+  
+- **Attention Slicing** - Automatically enabled to reduce memory
+- **VAE Slicing** - Automatically enabled to reduce memory
+- **Dynamic decode_chunk_size** - Uses 2 in low_vram mode, 4 otherwise
+
+### Changed
+- Default resolution order changed to smallest first: 256x512, 384x768, 512x1024
+- `low_vram` defaults to `True` for safety
+- Pipeline clears CUDA cache before each chunk
+
+### VRAM Requirements
+The Diffusion-VAS model (based on SVD) is extremely memory-intensive:
+
+| Mode | VRAM Needed | Notes |
+|------|-------------|-------|
+| `low_vram=True` | ~8-10GB | Sequential CPU offload, slower |
+| `low_vram=False` | ~16-24GB | Model CPU offload, faster |
+
+### If Still Getting OOM
+1. Ensure `low_vram=True` in the loader
+2. Use resolution `256x512` 
+3. Use `chunk_size=4` or even `2`
+4. Close other GPU applications
+5. The model may simply not fit - consider using a cloud GPU
+
+### Technical Details
+Sequential CPU offload moves each layer to GPU only during forward pass,
+then immediately moves it back to CPU. This allows running models larger
+than VRAM but is significantly slower due to constant CPU↔GPU transfers.
 
 ---
 

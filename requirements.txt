@@ -1,6 +1,6 @@
 # ComfyUI-SAM4DBodyCapture Requirements
 # ======================================
-# Version: 0.3.5 (Checkpoint Manager)
+# Version: 0.4.0 (MoGe2 Camera Integration)
 
 # Core dependencies
 torch>=2.0.0
@@ -26,6 +26,22 @@ omegaconf>=2.0.0
 imageio>=2.9.0
 tqdm>=4.60.0
 
+# ============================================
+# MoGe2 - Camera intrinsics estimation (v0.4.0+)
+# ============================================
+# OPTIONAL but recommended for accurate camera intrinsics
+# Without MoGe2, camera nodes will use fallback FOV=60°
+#
+# Install with ONE of these methods:
+# pip install git+https://github.com/microsoft/MoGe.git
+# 
+# Or clone and install:
+# git clone https://github.com/microsoft/MoGe.git
+# cd MoGe && pip install -r requirements.txt
+
+# Uncomment the line below to auto-install MoGe2 from GitHub:
+# moge @ git+https://github.com/microsoft/MoGe.git
+
 # Optional: Alembic export (for character point cache)
 # alembic  # pip install alembic
 
@@ -36,10 +52,11 @@ tqdm>=4.60.0
 # Notes
 # ============================================
 # 
-# Model downloads (~12GB total):
+# Model downloads (~17GB total):
 # - diffusion-vas-amodal-segmentation: ~5GB
 # - diffusion-vas-content-completion: ~5GB  
 # - depth_anything_v2_vitl.pth: ~1.4GB
+# - moge-2-vitl-normal: ~5GB (optional, for camera intrinsics)
 #
 # Models are auto-downloaded to checkpoints/ on first use.
 # Or pre-download with: python checkpoint_manager.py --download all

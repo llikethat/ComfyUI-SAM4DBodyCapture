@@ -158,6 +158,7 @@ class DiffusionVASWrapper:
         self.amodal_loaded = False
         self.completion_loaded = False
         self.depth_loaded = False  # For compatibility
+        self.low_vram_mode = False  # Sequential CPU offload mode
         self.default_resolution = (256, 512)  # Default resolution
         
         # Initialize checkpoint manager with token
@@ -524,7 +525,7 @@ class DiffusionVASWrapper:
         
         print("[VAS] Registered models.diffusion_vas module alias")
     
-    def load_amodal(self, model_id: str = None, auto_download: bool = True):
+    def load_amodal(self, model_id: str = None, auto_download: bool = True, low_vram: bool = False):
         """Load amodal segmentation pipeline."""
         if not LOCAL_VAS_AVAILABLE:
             print("[VAS] Local pipeline required but not available")
@@ -549,17 +550,35 @@ class DiffusionVASWrapper:
             print(f"[VAS] Loading amodal pipeline: {model_id}")
             self.amodal_pipeline = DiffusionVASPipeline.from_pretrained(
                 model_id, torch_dtype=self.dtype
-            ).to(self.device)
-            self.amodal_pipeline.enable_model_cpu_offload()
+            )
+            
+            # Memory optimization based on mode
+            if low_vram:
+                print("[VAS] Using sequential CPU offload (low VRAM mode)")
+                self.amodal_pipeline.enable_sequential_cpu_offload()
+            else:
+                print("[VAS] Using model CPU offload")
+                self.amodal_pipeline.enable_model_cpu_offload()
+            
+            # Additional memory optimizations
+            if hasattr(self.amodal_pipeline, 'enable_attention_slicing'):
+                self.amodal_pipeline.enable_attention_slicing(1)
+                print("[VAS] Enabled attention slicing")
+            
+            if hasattr(self.amodal_pipeline, 'enable_vae_slicing'):
+                self.amodal_pipeline.enable_vae_slicing()
+                print("[VAS] Enabled VAE slicing")
+            
             self.amodal_pipeline.set_progress_bar_config(disable=True)
             self.amodal_loaded = True
+            self.low_vram_mode = low_vram
             print("[VAS] Amodal pipeline loaded")
             return True
         except Exception as e:
             print(f"[VAS] Amodal load error: {e}")
             return False
     
-    def load_completion(self, model_id: str = None, auto_download: bool = True):
+    def load_completion(self, model_id: str = None, auto_download: bool = True, low_vram: bool = False):
         """Load content completion pipeline."""
         if not LOCAL_VAS_AVAILABLE:
             return False
@@ -582,8 +601,22 @@ class DiffusionVASWrapper:
             print(f"[VAS] Loading completion pipeline: {model_id}")
             self.completion_pipeline = DiffusionVASPipeline.from_pretrained(
                 model_id, torch_dtype=self.dtype
-            ).to(self.device)
-            self.completion_pipeline.enable_model_cpu_offload()
+            )
+            
+            # Memory optimization based on mode
+            if low_vram:
+                print("[VAS] Using sequential CPU offload for completion (low VRAM mode)")
+                self.completion_pipeline.enable_sequential_cpu_offload()
+            else:
+                self.completion_pipeline.to(self.device)
+                self.completion_pipeline.enable_model_cpu_offload()
+            
+            # Additional memory optimizations
+            if hasattr(self.completion_pipeline, 'enable_attention_slicing'):
+                self.completion_pipeline.enable_attention_slicing(1)
+            if hasattr(self.completion_pipeline, 'enable_vae_slicing'):
+                self.completion_pipeline.enable_vae_slicing()
+            
             self.completion_pipeline.set_progress_bar_config(disable=True)
             self.completion_loaded = True
             print("[VAS] Completion pipeline loaded")
@@ -596,11 +629,17 @@ class DiffusionVASWrapper:
         if not self.amodal_loaded:
             return None
         
+        # Use smaller decode chunk for low VRAM
+        decode_chunk = 2 if getattr(self, 'low_vram_mode', False) else min(4, num_frames)
+        
         try:
+            # Clear cache before inference
+            torch.cuda.empty_cache()
+            
             output = self.amodal_pipeline(
                 modal_masks, depth_maps,
                 height=resolution[0], width=resolution[1],
-                num_frames=num_frames, decode_chunk_size=8,
+                num_frames=num_frames, decode_chunk_size=decode_chunk,
                 motion_bucket_id=127, fps=8,
                 noise_aug_strength=0.02,
                 min_guidance_scale=1.5, max_guidance_scale=1.5,
@@ -655,9 +694,12 @@ class DiffusionVASLoader:
     
     For gated models, provide your HuggingFace API token.
     Get token from: https://huggingface.co/settings/tokens
+    
+    LOW VRAM MODE: Enable if you have <16GB VRAM. Uses sequential CPU 
+    offloading which is slower but uses much less GPU memory.
     """
     
-    RESOLUTIONS = ["512x1024", "256x512", "384x768"]
+    RESOLUTIONS = ["256x512", "384x768", "512x1024"]  # Reordered - smallest first
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -668,6 +710,10 @@ class DiffusionVASLoader:
             "optional": {
                 "enable_amodal": ("BOOLEAN", {"default": True}),
                 "enable_completion": ("BOOLEAN", {"default": False}),
+                "low_vram": ("BOOLEAN", {
+                    "default": True,  # Default to True for safety
+                    "tooltip": "Enable for <16GB VRAM. Uses sequential CPU offload (slower but uses less GPU memory)"
+                }),
                 "auto_download": ("BOOLEAN", {"default": True, "tooltip": "Auto-download models if not present"}),
                 "hf_token": ("STRING", {
                     "default": "",
@@ -684,7 +730,7 @@ class DiffusionVASLoader:
     CATEGORY = "SAM4DBodyCapture/VAS"
     
     def load(self, resolution, enable_amodal=True, enable_completion=False, 
-             auto_download=True, hf_token="", device="auto", dtype="float16"):
+             low_vram=True, auto_download=True, hf_token="", device="auto", dtype="float16"):
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -692,7 +738,7 @@ class DiffusionVASLoader:
         res_parts = resolution.split("x")
         res_tuple = (int(res_parts[0]), int(res_parts[1]))
         
-        print(f"[VAS] Loading on {device}")
+        print(f"[VAS] Loading on {device}, low_vram={low_vram}")
         wrapper = DiffusionVASWrapper(device=device, dtype=torch_dtype, hf_token=hf_token if hf_token else None)
         
         # Show checkpoint status
@@ -700,9 +746,9 @@ class DiffusionVASLoader:
             wrapper.ckpt_manager.print_status()
         
         if enable_amodal:
-            wrapper.load_amodal(auto_download=auto_download)
+            wrapper.load_amodal(auto_download=auto_download, low_vram=low_vram)
         if enable_completion:
-            wrapper.load_completion(auto_download=auto_download)
+            wrapper.load_completion(auto_download=auto_download, low_vram=low_vram)
         
         pipeline_data = {
             "wrapper": wrapper,
@@ -710,6 +756,7 @@ class DiffusionVASLoader:
             "device": device,
             "amodal_loaded": wrapper.amodal_loaded,
             "completion_loaded": wrapper.completion_loaded,
+            "low_vram": low_vram,
         }
         
         print(f"[VAS] Ready: amodal={wrapper.amodal_loaded}, completion={wrapper.completion_loaded}")
