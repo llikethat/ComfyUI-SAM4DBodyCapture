@@ -1,6 +1,6 @@
 # ComfyUI-SAM4DBodyCapture Requirements
 # ======================================
-# Version: 0.1.1 (Diffusion-VAS + Depth)
+# Version: 0.2.0 (SAM4D Pipeline)
 
 # Core dependencies
 torch>=2.0.0
@@ -15,13 +15,13 @@ accelerate>=0.20.0
 transformers>=4.30.0
 safetensors>=0.3.0
 
-# Depth estimation (Depth Anything V2)
-# Models auto-download from HuggingFace
+# Temporal smoothing
+scipy>=1.7.0
 
 # Configuration & utilities
 omegaconf>=2.0.0
 imageio>=2.9.0
-scipy>=1.7.0
+tqdm>=4.60.0
 
 # Optional: For GPU acceleration
 # xformers  # Uncomment for faster attention (requires CUDA)

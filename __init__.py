@@ -7,14 +7,15 @@ Integrates SAM-Body4D and Diffusion-VAS for ComfyUI.
 GitHub: https://github.com/llikethat/ComfyUI-SAM4DBodyCapture
 
 Version History:
-- v0.1.0: Initial release - Diffusion-VAS standalone node
-- v0.2.0: (Planned) SAM-Body4D integration
-- v0.3.0: (Planned) Export nodes (FBX/Alembic)
+- v0.1.0: Initial release - Diffusion-VAS skeleton
+- v0.1.1: Diffusion-VAS with depth estimation
+- v0.2.0: SAM-Body4D pipeline integration
+- v0.3.0: (Planned) FBX/Alembic export
 - v0.4.0: (Planned) Camera solver integration
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -48,65 +49,67 @@ try:
         "SAM4D_DiffusionVASUnload": "🎭 Unload VAS Models",
     })
     
-    print(f"[SAM4DBodyCapture] v{__version__} - Diffusion-VAS nodes loaded")
+    print(f"[SAM4DBodyCapture] Diffusion-VAS nodes loaded")
     
 except ImportError as e:
     print(f"[SAM4DBodyCapture] Diffusion-VAS nodes not available: {e}")
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading Diffusion-VAS: {e}")
 
-# ==================== SAM-Body4D Nodes (v0.2.0+) ====================
+# ==================== SAM4D Pipeline Nodes (v0.2.0+) ====================
 try:
-    from .nodes import sam_body4d
+    from .nodes import sam4d_pipeline
     
     NODE_CLASS_MAPPINGS.update({
-        "SAM4D_Body4DProcessor": sam_body4d.Body4DProcessor,
-        "SAM4D_TemporalFusion": sam_body4d.TemporalFusion,
+        "SAM4D_PipelineLoader": sam4d_pipeline.SAM4DPipelineLoader,
+        "SAM4D_OcclusionDetector": sam4d_pipeline.SAM4DOcclusionDetector,
+        "SAM4D_AmodalCompletion": sam4d_pipeline.SAM4DAmodalCompletion,
+        "SAM4D_PipelineUnload": sam4d_pipeline.SAM4DPipelineUnload,
     })
     
     NODE_DISPLAY_NAME_MAPPINGS.update({
-        "SAM4D_Body4DProcessor": "🏂 SAM-Body4D Processor",
-        "SAM4D_TemporalFusion": "🏂 Temporal Mesh Fusion",
+        "SAM4D_PipelineLoader": "🎬 Load SAM4D Pipeline",
+        "SAM4D_OcclusionDetector": "🔍 Detect Occlusions",
+        "SAM4D_AmodalCompletion": "🎭 Complete Occluded Regions",
+        "SAM4D_PipelineUnload": "🗑️ Unload SAM4D Pipeline",
     })
     
-    print(f"[SAM4DBodyCapture] SAM-Body4D nodes loaded")
+    print(f"[SAM4DBodyCapture] SAM4D Pipeline nodes loaded")
     
-except ImportError:
-    # Expected in v0.1.0
-    pass
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] SAM4D Pipeline nodes not available: {e}")
 except Exception as e:
-    print(f"[SAM4DBodyCapture] Error loading SAM-Body4D: {e}")
+    print(f"[SAM4DBodyCapture] Error loading SAM4D Pipeline: {e}")
 
-# ==================== Export Nodes (v0.3.0+) ====================
+# ==================== Temporal Fusion & Mesh Nodes (v0.2.0+) ====================
 try:
-    from .nodes import export_nodes
+    from .nodes import temporal_fusion
     
     NODE_CLASS_MAPPINGS.update({
-        "SAM4D_ExportCharacterFBX": export_nodes.ExportCharacterFBX,
-        "SAM4D_ExportCharacterAlembic": export_nodes.ExportCharacterAlembic,
-        "SAM4D_ExportCameraFBX": export_nodes.ExportCameraFBX,
-        "SAM4D_ExportCameraAlembic": export_nodes.ExportCameraAlembic,
+        "SAM4D_TemporalFusion": temporal_fusion.SAM4DTemporalFusion,
+        "SAM4D_ExportMeshSequence": temporal_fusion.SAM4DExportMeshSequence,
+        "SAM4D_CreateMeshSequence": temporal_fusion.SAM4DCreateMeshSequence,
+        "SAM4D_VisualizeMeshSequence": temporal_fusion.SAM4DVisualizeMeshSequence,
     })
     
     NODE_DISPLAY_NAME_MAPPINGS.update({
-        "SAM4D_ExportCharacterFBX": "📦 Export Character FBX",
-        "SAM4D_ExportCharacterAlembic": "📦 Export Character Alembic",
-        "SAM4D_ExportCameraFBX": "📦 Export Camera FBX",
-        "SAM4D_ExportCameraAlembic": "📦 Export Camera Alembic",
+        "SAM4D_TemporalFusion": "🔄 Temporal Fusion",
+        "SAM4D_ExportMeshSequence": "📦 Export Mesh Sequence",
+        "SAM4D_CreateMeshSequence": "✨ Create Mesh Sequence",
+        "SAM4D_VisualizeMeshSequence": "👁️ Visualize Mesh Sequence",
     })
     
-    print(f"[SAM4DBodyCapture] Export nodes loaded")
+    print(f"[SAM4DBodyCapture] Temporal Fusion & Mesh nodes loaded")
     
-except ImportError:
-    # Expected in v0.1.0 and v0.2.0
-    pass
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] Temporal Fusion nodes not available: {e}")
 except Exception as e:
-    print(f"[SAM4DBodyCapture] Error loading export nodes: {e}")
+    print(f"[SAM4DBodyCapture] Error loading Temporal Fusion: {e}")
 
 # ==================== Summary ====================
-if NODE_CLASS_MAPPINGS:
-    print(f"[SAM4DBodyCapture] Loaded {len(NODE_CLASS_MAPPINGS)} nodes")
-else:
+print(f"[SAM4DBodyCapture] v{__version__} - Loaded {len(NODE_CLASS_MAPPINGS)} nodes")
+
+if not NODE_CLASS_MAPPINGS:
     print(f"[SAM4DBodyCapture] Warning: No nodes loaded. Check dependencies.")
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "__version__"]

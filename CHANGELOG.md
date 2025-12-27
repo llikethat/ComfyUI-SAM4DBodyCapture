@@ -7,20 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v0.2.0
-- SAM-Body4D integration
-- Temporal mesh fusion
-- Multi-person handling
-
 ### Planned for v0.3.0
-- FBX export (character)
-- FBX export (camera)
-- Alembic export (character)
-- Alembic export (camera)
+- FBX export (skinned mesh with animation)
+- Alembic export (point cache)
+- Coordinate system presets
 
 ### Planned for v0.4.0
 - Integration with SAM3DBody2abc v4.0.0 camera solver
 - Hybrid workflow combining SAM4D with external camera solves
+
+---
+
+## [0.2.0] - 2025-12-27
+
+### Added
+
+#### SAM4D Pipeline Nodes
+- **🎬 Load SAM4D Pipeline** - Central loader for all models
+  - Depth Anything V2 (Large/Base/Small)
+  - Diffusion-VAS amodal segmentation (optional)
+  - Diffusion-VAS content completion (optional)
+  - Configurable resolution (512x1024, 256x512, 384x768)
+
+- **🔍 Detect Occlusions** - IoU-based occlusion detection
+  - Compares modal vs predicted amodal masks
+  - Per-object occlusion tracking
+  - Configurable IoU threshold
+  - Returns occlusion ranges for targeted completion
+
+- **🎭 Complete Occluded Regions** - Selective amodal completion
+  - Only processes frames marked as occluded
+  - Optional RGB content completion
+  - Margin expansion for smooth transitions
+
+- **🗑️ Unload SAM4D Pipeline** - Memory management
+
+#### Temporal Fusion & Mesh Nodes
+- **🔄 Temporal Fusion** - Smooth mesh sequences
+  - Gaussian filter smoothing
+  - Bidirectional EMA smoothing
+  - Separate vertex/parameter smoothing
+  - Configurable strength
+
+- **📦 Export Mesh Sequence** - Export to various formats
+  - OBJ sequence (per-frame files)
+  - NPZ (compressed numpy archive)
+  - Coordinate system transforms (Maya/Blender/Unreal/Unity)
+
+- **✨ Create Mesh Sequence** - Build sequences from frames
+  - Collect per-frame mesh outputs
+  - Support for multi-person tracking
+
+- **👁️ Visualize Mesh Sequence** - Preview rendering
+  - Simple orthographic projection
+  - Point cloud visualization
+
+#### Data Types
+- `SAM4D_PIPELINE` - Pipeline configuration container
+- `SAM4D_OCCLUSION_INFO` - Per-object occlusion tracking
+- `SAM4D_MESH_SEQUENCE` - Temporal mesh container
+
+### Technical Details
+- Occlusion detection uses IoU < 0.7 threshold by default
+- Largest connected component filtering for mask cleanup
+- Bidirectional EMA for symmetric temporal smoothing
+- Support for multi-person scenes with object ID tracking
 
 ---
 
