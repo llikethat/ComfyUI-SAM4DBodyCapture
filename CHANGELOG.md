@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.10] - 2025-12-27
+
+### Fixed
+- **VAS Module Registration** - Fixed `'models.diffusion_vas' is not a package` error
+- Now properly registers submodules with `__path__` attribute
+- Registers both `models.diffusion_vas.unet_diffusion_vas` and `models.diffusion_vas.pipeline_diffusion_vas`
+
+---
+
 ## [0.3.9] - 2025-12-27
 
 ### Fixed
