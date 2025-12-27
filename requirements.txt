@@ -1,6 +1,6 @@
 # ComfyUI-SAM4DBodyCapture Requirements
 # ======================================
-# Version: 0.3.0 (Export Nodes)
+# Version: 0.3.5 (Checkpoint Manager)
 
 # Core dependencies
 torch>=2.0.0
@@ -14,6 +14,9 @@ diffusers>=0.25.0
 accelerate>=0.20.0
 transformers>=4.30.0
 safetensors>=0.3.0
+
+# Model downloads
+huggingface_hub>=0.20.0
 
 # Temporal smoothing
 scipy>=1.7.0
@@ -30,26 +33,16 @@ tqdm>=4.60.0
 # xformers  # Uncomment for faster attention (requires CUDA)
 
 # ============================================
-# Future versions will add:
-# ============================================
-
-# v0.2.0 - SAM-Body4D
-# trimesh
-# pyrender
-# detectron2
-
-# v0.3.0 - Export
-# alembic (requires system install)
-# FBX SDK (optional, for native FBX)
-
-# ============================================
 # Notes
 # ============================================
 # 
-# Model downloads (~10GB total):
-# - diffusion-vas-amodal-segmentation: ~2GB
-# - diffusion-vas-content-completion: ~2GB  
-# - Depth-Anything-V2-Large: ~700MB
+# Model downloads (~12GB total):
+# - diffusion-vas-amodal-segmentation: ~5GB
+# - diffusion-vas-content-completion: ~5GB  
+# - depth_anything_v2_vitl.pth: ~1.4GB
+#
+# Models are auto-downloaded to checkpoints/ on first use.
+# Or pre-download with: python checkpoint_manager.py --download all
 #
 # GPU requirements:
 # - Minimum: 12GB VRAM (float16)

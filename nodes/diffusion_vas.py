@@ -48,6 +48,21 @@ except Exception as e:
     print(f"[Diffusion-VAS] Local VAS pipeline not available: {e}")
     DiffusionVASPipeline = None
 
+# Import checkpoint manager
+try:
+    from ..checkpoint_manager import CheckpointManager
+    CHECKPOINT_MANAGER_AVAILABLE = True
+except ImportError:
+    try:
+        # Direct import for testing
+        _pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, _pkg_dir)
+        from checkpoint_manager import CheckpointManager
+        CHECKPOINT_MANAGER_AVAILABLE = True
+    except ImportError:
+        CHECKPOINT_MANAGER_AVAILABLE = False
+        CheckpointManager = None
+
 # ============================================================================
 # Model Registry
 # ============================================================================
@@ -134,22 +149,40 @@ def estimate_depth_gradient(images: torch.Tensor, resolution: Tuple[int, int]) -
 class DiffusionVASWrapper:
     """Wrapper for Diffusion-VAS pipelines."""
     
-    def __init__(self, device: str = "cuda", dtype: torch.dtype = torch.float16):
+    def __init__(self, device: str = "cuda", dtype: torch.dtype = torch.float16, hf_token: str = None):
         self.device = device
         self.dtype = dtype
+        self.hf_token = hf_token
         self.amodal_pipeline = None
         self.completion_pipeline = None
         self.amodal_loaded = False
         self.completion_loaded = False
-    
-    def load_amodal(self, model_id: str = None):
-        if model_id is None:
-            model_id = HUGGINGFACE_MODELS["amodal_segmentation"]
         
+        # Initialize checkpoint manager with token
+        self.ckpt_manager = None
+        if CHECKPOINT_MANAGER_AVAILABLE:
+            try:
+                self.ckpt_manager = CheckpointManager(hf_token=hf_token)
+            except Exception as e:
+                print(f"[VAS] Checkpoint manager init failed: {e}")
+    
+    def load_amodal(self, model_id: str = None, auto_download: bool = True):
+        """Load amodal segmentation pipeline."""
         if not LOCAL_VAS_AVAILABLE:
             print("[VAS] Local pipeline required but not available")
             print("[VAS] Ensure lib/diffusion_vas/ contains pipeline files")
             return False
+        
+        # Try checkpoint manager first
+        local_path = None
+        if self.ckpt_manager and auto_download:
+            local_path = self.ckpt_manager.get_vas_amodal_model(auto_download=True)
+        
+        if local_path and local_path.exists():
+            model_id = str(local_path)
+            print(f"[VAS] Using local checkpoint: {model_id}")
+        elif model_id is None:
+            model_id = HUGGINGFACE_MODELS["amodal_segmentation"]
         
         try:
             print(f"[VAS] Loading amodal pipeline: {model_id}")
@@ -165,12 +198,21 @@ class DiffusionVASWrapper:
             print(f"[VAS] Amodal load error: {e}")
             return False
     
-    def load_completion(self, model_id: str = None):
-        if model_id is None:
-            model_id = HUGGINGFACE_MODELS["content_completion"]
-        
+    def load_completion(self, model_id: str = None, auto_download: bool = True):
+        """Load content completion pipeline."""
         if not LOCAL_VAS_AVAILABLE:
             return False
+        
+        # Try checkpoint manager first
+        local_path = None
+        if self.ckpt_manager and auto_download:
+            local_path = self.ckpt_manager.get_vas_completion_model(auto_download=True)
+        
+        if local_path and local_path.exists():
+            model_id = str(local_path)
+            print(f"[VAS] Using local checkpoint: {model_id}")
+        elif model_id is None:
+            model_id = HUGGINGFACE_MODELS["content_completion"]
         
         try:
             print(f"[VAS] Loading completion pipeline: {model_id}")
@@ -241,7 +283,15 @@ class DiffusionVASWrapper:
 # ============================================================================
 
 class DiffusionVASLoader:
-    """Load Diffusion-VAS models."""
+    """
+    Load Diffusion-VAS models.
+    
+    Models are downloaded to checkpoints/ folder on first use.
+    Use checkpoint_manager.py CLI to pre-download models.
+    
+    For gated models, provide your HuggingFace API token.
+    Get token from: https://huggingface.co/settings/tokens
+    """
     
     RESOLUTIONS = ["512x1024", "256x512", "384x768"]
     
@@ -254,6 +304,11 @@ class DiffusionVASLoader:
             "optional": {
                 "enable_amodal": ("BOOLEAN", {"default": True}),
                 "enable_completion": ("BOOLEAN", {"default": False}),
+                "auto_download": ("BOOLEAN", {"default": True, "tooltip": "Auto-download models if not present"}),
+                "hf_token": ("STRING", {
+                    "default": "",
+                    "tooltip": "HuggingFace API token for gated models. Get from: huggingface.co/settings/tokens"
+                }),
                 "device": (["auto", "cuda", "cpu"], {"default": "auto"}),
                 "dtype": (["float16", "float32"], {"default": "float16"}),
             }
@@ -264,7 +319,8 @@ class DiffusionVASLoader:
     FUNCTION = "load"
     CATEGORY = "SAM4DBodyCapture/VAS"
     
-    def load(self, resolution, enable_amodal=True, enable_completion=False, device="auto", dtype="float16"):
+    def load(self, resolution, enable_amodal=True, enable_completion=False, 
+             auto_download=True, hf_token="", device="auto", dtype="float16"):
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
         
@@ -273,12 +329,16 @@ class DiffusionVASLoader:
         res_tuple = (int(res_parts[0]), int(res_parts[1]))
         
         print(f"[VAS] Loading on {device}")
-        wrapper = DiffusionVASWrapper(device=device, dtype=torch_dtype)
+        wrapper = DiffusionVASWrapper(device=device, dtype=torch_dtype, hf_token=hf_token if hf_token else None)
+        
+        # Show checkpoint status
+        if wrapper.ckpt_manager:
+            wrapper.ckpt_manager.print_status()
         
         if enable_amodal:
-            wrapper.load_amodal()
+            wrapper.load_amodal(auto_download=auto_download)
         if enable_completion:
-            wrapper.load_completion()
+            wrapper.load_completion(auto_download=auto_download)
         
         pipeline_data = {
             "wrapper": wrapper,

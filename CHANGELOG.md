@@ -13,6 +13,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.6] - 2025-12-27
+
+### Added
+- **`hf_token` input** on VAS Loader node - Enter HuggingFace API token directly
+- **`--token` CLI argument** for checkpoint_manager.py
+- Token status shown in checkpoint status output
+
+### How to Get Token
+1. Go to https://huggingface.co/settings/tokens
+2. Create a new token (read access is sufficient)
+3. Paste in the `hf_token` field in VAS Loader node
+
+### Usage Options
+```bash
+# Option 1: In ComfyUI node
+# Paste token in 'hf_token' field
+
+# Option 2: CLI with token
+python checkpoint_manager.py --download all --token hf_xxx
+
+# Option 3: Environment variable
+export HF_TOKEN=hf_xxx
+python checkpoint_manager.py --download all
+```
+
+---
+
+## [0.3.5] - 2025-12-27
+
+### Added
+- **Checkpoint Manager** (`checkpoint_manager.py`) - Automatic model download and caching
+- **`checkpoints/` folder** - Models downloaded here automatically on first use
+- **`auto_download` option** - Toggle automatic model downloads in VAS Loader node
+- **CLI for model management**: `python checkpoint_manager.py --download all`
+
+### Changed
+- Models now cached locally instead of re-downloading from HuggingFace each time
+- Added `huggingface_hub` to requirements.txt
+
+### Model Sizes
+| Model | Size |
+|-------|------|
+| Depth-Anything-V2 Large | ~1.4GB |
+| Diffusion-VAS Amodal | ~5GB |
+| Diffusion-VAS Completion | ~5GB |
+
+---
+
 ## [0.3.4] - 2025-12-27
 
 ### Fixed
