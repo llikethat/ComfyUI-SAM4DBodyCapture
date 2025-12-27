@@ -7,14 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v0.3.0
-- FBX export (skinned mesh with animation)
-- Alembic export (point cache)
-- Coordinate system presets
-
 ### Planned for v0.4.0
 - Integration with SAM3DBody2abc v4.0.0 camera solver
 - Hybrid workflow combining SAM4D with external camera solves
+
+---
+
+## [0.3.0] - 2025-12-27
+
+### Added
+
+#### Export Nodes
+- **📦 Export Character FBX** - ASCII FBX 7.4 export
+  - Compatible with Maya, Blender, Unreal, Unity, 3ds Max
+  - Coordinate system presets for all major DCCs
+  - Base mesh with topology
+
+- **📦 Export Character Alembic** - Point cache export
+  - Full vertex animation support
+  - Ideal for VFX pipelines (Houdini, Nuke)
+  - Requires: `pip install alembic` (fallback to OBJ if unavailable)
+
+- **📦 Export Character OBJ Sequence** - Per-frame OBJ files
+  - Most compatible format
+  - Works with all 3D software
+
+- **🎥 Export Camera FBX** - Camera animation export
+  - Position, rotation, focal length
+
+- **🎥 Export Camera JSON** - Universal camera format
+  - For custom importers and web viewers
+
+#### Coordinate System Support
+- Y-up (Maya/Blender) - default
+- Z-up (Unreal) - with 100x scale for cm
+- Y-up (Unity) - left-handed
+- Y-up (Houdini)
+- Y-up (Nuke)
+
+### Changed
+
+#### Create Mesh Sequence Node
+- Now accepts `mesh_data` input directly from SAM3DBody nodes
+- Auto-extracts vertices, faces, and SMPL parameters
+- Supports dict, tuple, or object formats
+- No required inputs - all optional for flexibility
+
+### Technical Details
+- FBX export uses ASCII format (no binary SDK required)
+- Alembic export via PyAlembic (optional dependency)
+- Coordinate transforms apply rotation and scale
+- SMPL params preserved through pipeline
 
 ---
 

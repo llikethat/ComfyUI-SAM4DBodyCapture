@@ -1,6 +1,6 @@
 # ComfyUI-SAM4DBodyCapture Requirements
 # ======================================
-# Version: 0.2.0 (SAM4D Pipeline)
+# Version: 0.3.0 (Export Nodes)
 
 # Core dependencies
 torch>=2.0.0
@@ -22,6 +22,9 @@ scipy>=1.7.0
 omegaconf>=2.0.0
 imageio>=2.9.0
 tqdm>=4.60.0
+
+# Optional: Alembic export (for character point cache)
+# alembic  # pip install alembic
 
 # Optional: For GPU acceleration
 # xformers  # Uncomment for faster attention (requires CUDA)

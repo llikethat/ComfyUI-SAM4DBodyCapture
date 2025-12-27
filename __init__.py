@@ -10,12 +10,12 @@ Version History:
 - v0.1.0: Initial release - Diffusion-VAS skeleton
 - v0.1.1: Diffusion-VAS with depth estimation
 - v0.2.0: SAM-Body4D pipeline integration
-- v0.3.0: (Planned) FBX/Alembic export
+- v0.3.0: Export nodes (FBX, Alembic, OBJ)
 - v0.4.0: (Planned) Camera solver integration
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -105,6 +105,33 @@ except ImportError as e:
     print(f"[SAM4DBodyCapture] Temporal Fusion nodes not available: {e}")
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading Temporal Fusion: {e}")
+
+# ==================== Export Nodes (v0.3.0+) ====================
+try:
+    from .nodes import export_nodes
+    
+    NODE_CLASS_MAPPINGS.update({
+        "SAM4D_ExportCharacterFBX": export_nodes.SAM4DExportCharacterFBX,
+        "SAM4D_ExportCharacterAlembic": export_nodes.SAM4DExportCharacterAlembic,
+        "SAM4D_ExportCharacterOBJ": export_nodes.SAM4DExportCharacterOBJ,
+        "SAM4D_ExportCameraFBX": export_nodes.SAM4DExportCameraFBX,
+        "SAM4D_ExportCameraJSON": export_nodes.SAM4DExportCameraJSON,
+    })
+    
+    NODE_DISPLAY_NAME_MAPPINGS.update({
+        "SAM4D_ExportCharacterFBX": "📦 Export Character FBX",
+        "SAM4D_ExportCharacterAlembic": "📦 Export Character Alembic",
+        "SAM4D_ExportCharacterOBJ": "📦 Export Character OBJ Sequence",
+        "SAM4D_ExportCameraFBX": "🎥 Export Camera FBX",
+        "SAM4D_ExportCameraJSON": "🎥 Export Camera JSON",
+    })
+    
+    print(f"[SAM4DBodyCapture] Export nodes loaded")
+    
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] Export nodes not available: {e}")
+except Exception as e:
+    print(f"[SAM4DBodyCapture] Error loading Export nodes: {e}")
 
 # ==================== Summary ====================
 print(f"[SAM4DBodyCapture] v{__version__} - Loaded {len(NODE_CLASS_MAPPINGS)} nodes")

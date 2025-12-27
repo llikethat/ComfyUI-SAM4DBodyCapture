@@ -4,17 +4,23 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.2.0-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
+
+### v0.3.0 - Export Nodes
+- 📦 **FBX Export** - Character meshes for Maya, Blender, Unreal, Unity
+- 📦 **Alembic Export** - Point cache for VFX pipelines
+- 📦 **OBJ Sequence** - Universal per-frame mesh files
+- 🎥 **Camera Export** - FBX and JSON camera animation
+- 🌐 **Coordinate Systems** - Presets for all major 3D software
 
 ### v0.2.0 - SAM4D Pipeline
 - 🎬 **Complete Pipeline** - One-click occlusion detection and completion
 - 🔍 **Smart Occlusion Detection** - IoU-based identification of hidden body parts  
 - 🎭 **Amodal Completion** - Recover complete masks using diffusion priors
 - 🔄 **Temporal Fusion** - Smooth mesh sequences with Gaussian/EMA filtering
-- 📦 **Mesh Export** - OBJ sequence and NPZ formats
 
 ### Previous Versions
 - v0.1.x - Diffusion-VAS standalone nodes
@@ -41,7 +47,7 @@ Models download from HuggingFace on first use:
 | diffusion-vas-amodal-segmentation | ~2GB | Amodal mask prediction |
 | diffusion-vas-content-completion | ~2GB | RGB inpainting (optional) |
 
-## 🔧 Nodes (12 Total)
+## 🔧 Nodes (17 Total)
 
 ### SAM4D Pipeline Nodes
 
@@ -57,9 +63,19 @@ Models download from HuggingFace on first use:
 | Node | Description |
 |------|-------------|
 | 🔄 **Temporal Fusion** | Smooth vertex/parameter jitter |
-| 📦 **Export Mesh Sequence** | Save as OBJ sequence or NPZ |
-| ✨ **Create Mesh Sequence** | Build sequence from frames |
+| ✨ **Create Mesh Sequence** | Build sequence from SAM3DBody mesh_data |
 | 👁️ **Visualize Mesh Sequence** | Preview mesh as point cloud |
+
+### Export Nodes (NEW in v0.3.0)
+
+| Node | Description |
+|------|-------------|
+| 📦 **Export Character FBX** | ASCII FBX 7.4 (Maya, Blender, Unreal, Unity) |
+| 📦 **Export Character Alembic** | Point cache for VFX pipelines |
+| 📦 **Export Character OBJ** | Per-frame OBJ files (universal) |
+| 📦 **Export Mesh Sequence** | NPZ compressed format |
+| 🎥 **Export Camera FBX** | Camera animation FBX |
+| 🎥 **Export Camera JSON** | Universal camera format |
 
 ### Diffusion-VAS Nodes (Standalone)
 
@@ -181,7 +197,7 @@ MIT License - see [LICENSE](LICENSE)
 - [x] v0.1.0 - Diffusion-VAS skeleton
 - [x] v0.1.1 - Diffusion-VAS with depth
 - [x] v0.2.0 - SAM4D pipeline integration
-- [ ] v0.3.0 - FBX/Alembic export
+- [x] v0.3.0 - FBX/Alembic/OBJ export
 - [ ] v0.4.0 - Camera solver integration  
 - [ ] v1.0.0 - Stable release
 

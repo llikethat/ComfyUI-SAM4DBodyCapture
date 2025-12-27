@@ -399,19 +399,23 @@ class SAM4DCreateMeshSequence:
     
     Use this to collect per-frame mesh outputs from SAM3DBody
     into a temporal sequence for smoothing and export.
+    
+    Accepts:
+    - mesh_data: Direct output from SAM3DBody nodes (MESH_DATA type)
+    - vertices/faces: Raw numpy arrays
     """
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
-                "vertices": ("NUMPY",),  # [N, 3] or [B, N, 3]
-            },
+            "required": {},
             "optional": {
+                "mesh_data": ("MESH_DATA",),  # Direct from SAM3DBody
+                "vertices": ("NUMPY",),  # [N, 3] or [B, N, 3]
                 "faces": ("NUMPY",),  # [F, 3]
                 "existing_sequence": ("SAM4D_MESH_SEQUENCE",),
-                "fps": ("FLOAT", {"default": 30.0}),
-                "person_id": ("INT", {"default": 1}),
+                "fps": ("FLOAT", {"default": 30.0, "min": 1.0, "max": 120.0}),
+                "person_id": ("INT", {"default": 1, "min": 1, "max": 10}),
             }
         }
     
@@ -420,9 +424,63 @@ class SAM4DCreateMeshSequence:
     FUNCTION = "create"
     CATEGORY = "SAM4DBodyCapture/Mesh"
     
+    def extract_from_mesh_data(self, mesh_data):
+        """
+        Extract vertices, faces, and params from SAM3DBody mesh_data.
+        
+        mesh_data can be:
+        - dict with 'vertices', 'faces', etc.
+        - tuple/list of (vertices, faces, ...)
+        - object with .vertices, .faces attributes
+        """
+        vertices = None
+        faces = None
+        params = {}
+        
+        if mesh_data is None:
+            return None, None, {}
+        
+        # Handle dict
+        if isinstance(mesh_data, dict):
+            vertices = mesh_data.get('vertices', mesh_data.get('verts', None))
+            faces = mesh_data.get('faces', mesh_data.get('f', None))
+            
+            # Extract SMPL params if available
+            for key in ['body_pose', 'global_orient', 'betas', 'transl', 'pose', 'shape']:
+                if key in mesh_data:
+                    params[key] = mesh_data[key]
+        
+        # Handle tuple/list
+        elif isinstance(mesh_data, (tuple, list)):
+            if len(mesh_data) >= 1:
+                vertices = mesh_data[0]
+            if len(mesh_data) >= 2:
+                faces = mesh_data[1]
+        
+        # Handle object with attributes
+        elif hasattr(mesh_data, 'vertices'):
+            vertices = mesh_data.vertices
+            if hasattr(mesh_data, 'faces'):
+                faces = mesh_data.faces
+            elif hasattr(mesh_data, 'f'):
+                faces = mesh_data.f
+        
+        # Convert tensors to numpy
+        if vertices is not None and isinstance(vertices, torch.Tensor):
+            vertices = vertices.detach().cpu().numpy()
+        if faces is not None and isinstance(faces, torch.Tensor):
+            faces = faces.detach().cpu().numpy()
+        
+        # Handle batched vertices [B, N, 3] - take first if single batch
+        if vertices is not None and vertices.ndim == 3 and vertices.shape[0] == 1:
+            vertices = vertices[0]
+        
+        return vertices, faces, params
+    
     def create(
         self,
-        vertices: np.ndarray,
+        mesh_data=None,
+        vertices: np.ndarray = None,
         faces: np.ndarray = None,
         existing_sequence: dict = None,
         fps: float = 30.0,
@@ -435,18 +493,35 @@ class SAM4DCreateMeshSequence:
             seq = SAM4DMeshSequence()
             seq.fps = fps
         
-        # Set faces if provided and not already set
-        if faces is not None and seq.faces is None:
-            seq.faces = faces
+        # Extract from mesh_data if provided (SAM3DBody output)
+        extracted_verts = None
+        extracted_faces = None
+        extracted_params = {}
         
-        # Handle batched or single frame input
-        if vertices.ndim == 2:
-            # Single frame [N, 3]
-            seq.add_frame(vertices, person_id=person_id)
-        elif vertices.ndim == 3:
-            # Batched [B, N, 3]
-            for i in range(vertices.shape[0]):
-                seq.add_frame(vertices[i], person_id=person_id)
+        if mesh_data is not None:
+            extracted_verts, extracted_faces, extracted_params = self.extract_from_mesh_data(mesh_data)
+        
+        # Use extracted or provided data
+        final_vertices = extracted_verts if extracted_verts is not None else vertices
+        final_faces = extracted_faces if extracted_faces is not None else faces
+        
+        # Set faces if provided and not already set
+        if final_faces is not None and seq.faces is None:
+            seq.faces = final_faces
+        
+        # Add frame(s)
+        if final_vertices is not None:
+            if final_vertices.ndim == 2:
+                # Single frame [N, 3]
+                seq.add_frame(final_vertices, params=extracted_params, person_id=person_id)
+            elif final_vertices.ndim == 3:
+                # Batched [B, N, 3]
+                for i in range(final_vertices.shape[0]):
+                    frame_params = {k: v[i] if hasattr(v, '__getitem__') and len(v) > i else v 
+                                   for k, v in extracted_params.items()}
+                    seq.add_frame(final_vertices[i], params=frame_params, person_id=person_id)
+        else:
+            print("[SAM4D] Warning: No vertex data provided to CreateMeshSequence")
         
         return (seq.to_dict(),)
 
