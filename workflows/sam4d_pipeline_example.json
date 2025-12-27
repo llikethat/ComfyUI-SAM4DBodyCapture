@@ -1,6 +1,6 @@
 {
-  "last_node_id": 8,
-  "last_link_id": 10,
+  "last_node_id": 9,
+  "last_link_id": 12,
   "nodes": [
     {
       "id": 1,
@@ -20,14 +20,15 @@
       "id": 2,
       "type": "SAM4D_OcclusionDetector",
       "pos": [450, 100],
-      "size": {"0": 300, "1": 200},
+      "size": {"0": 300, "1": 220},
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [
         {"name": "pipeline", "type": "SAM4D_PIPELINE", "link": 1},
         {"name": "images", "type": "IMAGE", "link": null},
-        {"name": "masks", "type": "MASK", "link": null}
+        {"name": "masks", "type": "MASK", "link": null},
+        {"name": "depth_maps", "type": "IMAGE", "link": null, "tooltip": "Optional: Connect Depth-Anything-V2, DepthCrafter, etc."}
       ],
       "outputs": [
         {"name": "occlusion_info", "type": "SAM4D_OCCLUSION_INFO", "links": [2]},
@@ -96,7 +97,7 @@
       "id": 6,
       "type": "SAM4D_ExportCharacterFBX",
       "pos": [760, 350],
-      "size": {"0": 300, "1": 120},
+      "size": {"0": 300, "1": 140},
       "flags": {},
       "order": 5,
       "mode": 0,
@@ -104,18 +105,34 @@
         {"name": "mesh_sequence", "type": "SAM4D_MESH_SEQUENCE", "link": 10}
       ],
       "outputs": [
-        {"name": "fbx_filepath", "type": "STRING", "links": []}
+        {"name": "fbx_filepath", "type": "STRING", "links": [11]}
       ],
       "properties": {"Node name for S&R": "SAM4D_ExportCharacterFBX"},
-      "widgets_values": ["outputs/sam4d_character", "Y-up (Maya/Blender)", true]
+      "widgets_values": ["sam4d_animation", "Y-up (Maya/Blender)", 30.0, false]
     },
     {
       "id": 7,
-      "type": "SAM4D_VisualizeMeshSequence",
-      "pos": [760, 500],
+      "type": "SAM4D_FBXViewer",
+      "pos": [1100, 350],
       "size": {"0": 300, "1": 100},
       "flags": {},
       "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"name": "fbx_path", "type": "STRING", "link": 11}
+      ],
+      "outputs": [
+        {"name": "fbx_path", "type": "STRING", "links": []}
+      ],
+      "properties": {"Node name for S&R": "SAM4D_FBXViewer"}
+    },
+    {
+      "id": 8,
+      "type": "SAM4D_VisualizeMeshSequence",
+      "pos": [760, 520],
+      "size": {"0": 300, "1": 100},
+      "flags": {},
+      "order": 7,
       "mode": 0,
       "inputs": [
         {"name": "mesh_sequence", "type": "SAM4D_MESH_SEQUENCE", "link": 12}
@@ -127,14 +144,14 @@
       "widgets_values": [512, false]
     },
     {
-      "id": 8,
+      "id": 9,
       "type": "Note",
       "pos": [100, 580],
-      "size": {"0": 350, "1": 100},
+      "size": {"0": 400, "1": 120},
       "flags": {},
-      "order": 7,
+      "order": 8,
       "mode": 0,
-      "properties": {"text": "SAM4DBodyCapture v0.3.1 Workflow\n\nConnect mesh_data (SAM3D_OUTPUT) from:\n  SAM3DBody Process → Create Mesh Sequence\n\nOutputs: FBX for Maya/Blender/Unreal"}
+      "properties": {"text": "SAM4DBodyCapture v0.3.3 Workflow\n\nConnect mesh_data (SAM3D_OUTPUT) from:\n  SAM3DBody Process → Create Mesh Sequence\n\nOptional: Connect depth_maps from:\n  Depth-Anything-V2 / DepthCrafter → Occlusion Detector\n\nOutputs: FBX for Maya/Blender/Unreal"}
     }
   ],
   "links": [
@@ -143,7 +160,8 @@
     [3, 1, 0, 3, 0, "SAM4D_PIPELINE"],
     [5, 4, 0, 5, 0, "SAM4D_MESH_SEQUENCE"],
     [10, 5, 0, 6, 0, "SAM4D_MESH_SEQUENCE"],
-    [12, 5, 0, 7, 0, "SAM4D_MESH_SEQUENCE"]
+    [11, 6, 0, 7, 0, "STRING"],
+    [12, 5, 0, 8, 0, "SAM4D_MESH_SEQUENCE"]
   ],
   "groups": [
     {
@@ -153,7 +171,7 @@
     },
     {
       "title": "Mesh Processing & Export",
-      "bounding": [80, 350, 1000, 360],
+      "bounding": [80, 350, 1350, 380],
       "color": "#8A8"
     }
   ],

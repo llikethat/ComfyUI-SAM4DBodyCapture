@@ -265,6 +265,9 @@ class SAM4DOcclusionDetector:
     
     Uses Diffusion-VAS amodal segmentation to predict complete masks,
     then computes IoU to identify frames where the object is partially hidden.
+    
+    Accepts optional external depth_maps from any ComfyUI depth node
+    (Depth-Anything-V2, DepthCrafter, ZoeDepth, etc.)
     """
     
     @classmethod
@@ -276,6 +279,9 @@ class SAM4DOcclusionDetector:
                 "masks": ("MASK",),
             },
             "optional": {
+                "depth_maps": ("IMAGE", {
+                    "tooltip": "External depth maps from any depth node (Depth-Anything, DepthCrafter, etc.)"
+                }),
                 "iou_threshold": ("FLOAT", {"default": 0.7, "min": 0.3, "max": 0.95, "step": 0.05}),
                 "object_ids": ("STRING", {"default": "1", "tooltip": "Comma-separated object IDs"}),
                 "num_frames": ("INT", {"default": 25, "min": 4, "max": 64}),
@@ -293,6 +299,7 @@ class SAM4DOcclusionDetector:
         pipeline: dict,
         images: torch.Tensor,
         masks: torch.Tensor,
+        depth_maps: torch.Tensor = None,
         iou_threshold: float = 0.7,
         object_ids: str = "1",
         num_frames: int = 25,
@@ -316,15 +323,25 @@ class SAM4DOcclusionDetector:
         # Create occlusion info
         occ_info = SAM4DOcclusionInfo(B)
         
-        # Estimate depth for all frames
-        print("[SAM4D] Estimating depth...")
-        depth_maps, _ = vas_wrapper.run_amodal_segmentation(
-            images=images,
-            modal_masks=masks,
-            resolution=resolution,
-            num_frames=num_frames,
-            seed=seed,
-        )
+        # Use external depth if provided, otherwise estimate
+        if depth_maps is not None:
+            print("[SAM4D] Using external depth maps")
+            # Ensure depth is in correct format [B, H, W, C]
+            if depth_maps.dim() == 3:
+                depth_maps = depth_maps.unsqueeze(-1).repeat(1, 1, 1, 3)
+            elif depth_maps.shape[-1] == 1:
+                depth_maps = depth_maps.repeat(1, 1, 1, 3)
+            depth_out = depth_maps
+        else:
+            print("[SAM4D] Estimating depth (using gradient fallback)...")
+            depth_out, _ = vas_wrapper.run_amodal_segmentation(
+                images=images,
+                modal_masks=masks,
+                resolution=resolution,
+                num_frames=num_frames,
+                seed=seed,
+            )
+            depth_out = depth_out.unsqueeze(-1).repeat(1, 1, 1, 3) if depth_out.dim() == 3 else depth_out
         
         # If no amodal pipeline, return empty occlusion info
         if not pipeline.get("amodal_loaded", False):
@@ -332,8 +349,7 @@ class SAM4DOcclusionDetector:
             for obj_id in obj_ids:
                 occ_info.add_object_results(obj_id, [1.0] * B, iou_threshold)
             
-            depth_vis = depth_maps.unsqueeze(-1).repeat(1, 1, 1, 3)
-            return (occ_info.to_dict(), depth_vis, masks)
+            return (occ_info.to_dict(), depth_out, masks)
         
         # Run amodal segmentation for each object
         all_amodal_masks = torch.zeros_like(masks)

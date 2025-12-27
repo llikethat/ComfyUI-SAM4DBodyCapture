@@ -5,36 +5,92 @@ Provides export capabilities for:
 - Character meshes (FBX, Alembic, OBJ sequence)
 - Camera data (FBX, Alembic)
 
-Supports coordinate system transforms for:
-- Maya/Blender (Y-up, right-handed)
-- Unreal Engine (Z-up, left-handed)
-- Unity (Y-up, left-handed)
-- Houdini (Y-up, right-handed)
-- Nuke (Y-up, right-handed)
+Uses Blender from SAM3DBody for proper animated FBX export.
 """
 
 import os
 import json
-import struct
+import subprocess
+import shutil
+import glob
+import tempfile
 import numpy as np
 import torch
 from typing import Dict, Tuple, Any, Optional, List
 from datetime import datetime
 
+# Try to import folder_paths for ComfyUI output directory
+try:
+    import folder_paths
+    COMFYUI_OUTPUT = folder_paths.get_output_directory()
+except ImportError:
+    COMFYUI_OUTPUT = "outputs"
+
 # Import our pipeline types
 from .sam4d_pipeline import SAM4DMeshSequence
 
 # ============================================================================
-# Check for optional export libraries
+# Blender Path Finding
 # ============================================================================
 
-ALEMBIC_AVAILABLE = False
-try:
-    import alembic
-    from alembic import Abc, AbcGeom
-    ALEMBIC_AVAILABLE = True
-except ImportError:
-    pass
+BLENDER_TIMEOUT = 600
+_BLENDER_PATH = None
+
+def find_blender() -> Optional[str]:
+    """Find Blender executable, prioritizing SAM3DBody bundled version."""
+    global _BLENDER_PATH
+    
+    if _BLENDER_PATH is not None:
+        return _BLENDER_PATH
+    
+    locations = []
+    
+    # Check SAM3DBody bundled Blender first (recommended)
+    try:
+        custom_nodes = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        patterns = [
+            os.path.join(custom_nodes, "ComfyUI-SAM3DBody", "lib", "blender", "blender-*-linux-x64", "blender"),
+            os.path.join(custom_nodes, "ComfyUI-SAM3DBody", "lib", "blender", "*", "blender"),
+        ]
+        for pattern in patterns:
+            matches = glob.glob(pattern)
+            locations.extend(matches)
+    except Exception:
+        pass
+    
+    # Also check workspace path (RunPod/cloud)
+    workspace_patterns = [
+        "/workspace/ComfyUI/custom_nodes/ComfyUI-SAM3DBody/lib/blender/blender-*-linux-x64/blender",
+    ]
+    for pattern in workspace_patterns:
+        matches = glob.glob(pattern)
+        locations.extend(matches)
+    
+    # System Blender as fallback
+    locations.extend([
+        shutil.which("blender"),
+        "/usr/bin/blender",
+        "/usr/local/bin/blender",
+        "/Applications/Blender.app/Contents/MacOS/Blender",
+    ])
+    
+    # Windows
+    for ver in ["4.2", "4.1", "4.0", "3.6"]:
+        locations.append(f"C:\\Program Files\\Blender Foundation\\Blender {ver}\\blender.exe")
+    
+    for loc in locations:
+        if loc and os.path.exists(loc):
+            _BLENDER_PATH = loc
+            print(f"[SAM4D Export] Found Blender: {loc}")
+            return loc
+    
+    return None
+
+
+# Get the Blender script path
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_lib_dir = os.path.join(os.path.dirname(_current_dir), "lib")
+BLENDER_SCRIPT = os.path.join(_lib_dir, "blender_animated_fbx.py")
 
 # ============================================================================
 # Coordinate System Transforms
@@ -471,14 +527,13 @@ def export_camera_json(
 
 class SAM4DExportCharacterFBX:
     """
-    Export mesh sequence as FBX file.
+    Export mesh sequence as animated FBX file using Blender.
     
-    Creates an ASCII FBX 7.4 file compatible with:
-    - Maya
-    - Blender
-    - Unreal Engine
-    - Unity
-    - 3ds Max
+    Creates an animated FBX with:
+    - Mesh with shape keys (vertex animation)
+    - Skeleton with keyframes
+    
+    Compatible with Maya, Blender, Unreal, Unity, 3ds Max.
     """
     
     COORD_SYSTEMS = list(COORD_SYSTEMS.keys())
@@ -488,14 +543,15 @@ class SAM4DExportCharacterFBX:
         return {
             "required": {
                 "mesh_sequence": ("SAM4D_MESH_SEQUENCE",),
-                "output_path": ("STRING", {
-                    "default": "outputs/sam4d_character",
-                    "tooltip": "Output path without extension"
+                "filename": ("STRING", {
+                    "default": "sam4d_animation",
+                    "tooltip": "Output filename (without extension)"
                 }),
             },
             "optional": {
                 "coordinate_system": (cls.COORD_SYSTEMS, {"default": "Y-up (Maya/Blender)"}),
-                "include_animation": ("BOOLEAN", {"default": True}),
+                "fps": ("FLOAT", {"default": 30.0, "min": 1.0, "max": 120.0}),
+                "include_camera": ("BOOLEAN", {"default": False}),
             }
         }
     
@@ -508,39 +564,116 @@ class SAM4DExportCharacterFBX:
     def export(
         self,
         mesh_sequence: dict,
-        output_path: str,
+        filename: str = "sam4d_animation",
         coordinate_system: str = "Y-up (Maya/Blender)",
-        include_animation: bool = True,
+        fps: float = 30.0,
+        include_camera: bool = False,
     ):
         seq = SAM4DMeshSequence.from_dict(mesh_sequence)
         
-        # Ensure output directory exists
-        output_dir = os.path.dirname(output_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        if seq.frame_count == 0:
+            print("[SAM4D Export] No frames in sequence")
+            return ("",)
         
-        filepath = output_path + ".fbx"
+        # Find Blender
+        blender_path = find_blender()
+        if not blender_path:
+            print("[SAM4D Export] Blender not found!")
+            print("[SAM4D Export] Install Blender or ensure ComfyUI-SAM3DBody is installed")
+            return ("",)
         
-        print(f"[SAM4D Export] Exporting FBX: {filepath}")
-        print(f"[SAM4D Export] Frames: {seq.frame_count}, Coordinate System: {coordinate_system}")
+        # Use ComfyUI output directory
+        output_dir = COMFYUI_OUTPUT
+        os.makedirs(output_dir, exist_ok=True)
         
-        export_fbx_ascii(filepath, seq, coordinate_system, include_animation)
+        output_path = os.path.join(output_dir, f"{filename}.fbx")
         
-        print(f"[SAM4D Export] FBX saved successfully")
+        # Build JSON for Blender script
+        up_axis = "Y" if "Y-up" in coordinate_system else "Z"
         
-        return (filepath,)
+        frames_data = []
+        for i, vertices in enumerate(seq.vertices):
+            frame_data = {
+                "frame_index": i,
+                "vertices": vertices.tolist() if isinstance(vertices, np.ndarray) else vertices,
+            }
+            if seq.params and i < len(seq.params):
+                params = seq.params[i]
+                if isinstance(params, dict):
+                    if 'joint_coords' in params:
+                        jc = params['joint_coords']
+                        frame_data['joint_coords'] = jc.tolist() if hasattr(jc, 'tolist') else jc
+                    if 'joint_rotations' in params:
+                        jr = params['joint_rotations']
+                        frame_data['joint_rotations'] = jr.tolist() if hasattr(jr, 'tolist') else jr
+            frames_data.append(frame_data)
+        
+        export_data = {
+            "fps": fps if fps > 0 else seq.fps,
+            "frame_count": seq.frame_count,
+            "faces": seq.faces.tolist() if seq.faces is not None else None,
+            "frames": frames_data,
+            "world_translation_mode": "none",
+            "skeleton_mode": "positions",
+        }
+        
+        # Write temp JSON
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(export_data, f)
+            json_path = f.name
+        
+        try:
+            cmd = [
+                blender_path,
+                "--background",
+                "--python", BLENDER_SCRIPT,
+                "--",
+                json_path,
+                output_path,
+                up_axis,
+                "1",  # include_mesh
+                "1" if include_camera else "0",
+            ]
+            
+            print(f"[SAM4D Export] Exporting {seq.frame_count} frames to FBX...")
+            print(f"[SAM4D Export] Output: {output_path}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=BLENDER_TIMEOUT,
+            )
+            
+            if result.returncode != 0:
+                error = result.stderr[:500] if result.stderr else "Unknown error"
+                print(f"[SAM4D Export] Blender error: {error}")
+                return ("",)
+            
+            if not os.path.exists(output_path):
+                print("[SAM4D Export] FBX not created")
+                return ("",)
+            
+            print(f"[SAM4D Export] FBX saved: {output_path}")
+            return (output_path,)
+            
+        except subprocess.TimeoutExpired:
+            print("[SAM4D Export] Blender timed out")
+            return ("",)
+        except Exception as e:
+            print(f"[SAM4D Export] Error: {e}")
+            return ("",)
+        finally:
+            if os.path.exists(json_path):
+                os.unlink(json_path)
 
 
 class SAM4DExportCharacterAlembic:
     """
     Export mesh sequence as Alembic file.
     
-    Alembic is ideal for:
-    - Vertex animation / point cache
-    - VFX pipelines (Houdini, Nuke)
-    - High-fidelity mesh animation
-    
-    Requires: pip install alembic
+    Ideal for VFX pipelines (Houdini, Nuke).
+    Falls back to OBJ sequence if Alembic not available.
     """
     
     COORD_SYSTEMS = list(COORD_SYSTEMS.keys())
@@ -550,8 +683,8 @@ class SAM4DExportCharacterAlembic:
         return {
             "required": {
                 "mesh_sequence": ("SAM4D_MESH_SEQUENCE",),
-                "output_path": ("STRING", {
-                    "default": "outputs/sam4d_character",
+                "filename": ("STRING", {
+                    "default": "sam4d_character",
                 }),
             },
             "optional": {
@@ -568,30 +701,84 @@ class SAM4DExportCharacterAlembic:
     def export(
         self,
         mesh_sequence: dict,
-        output_path: str,
+        filename: str = "sam4d_character",
         coordinate_system: str = "Y-up (Maya/Blender)",
     ):
         seq = SAM4DMeshSequence.from_dict(mesh_sequence)
         
-        output_dir = os.path.dirname(output_path)
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
+        output_dir = COMFYUI_OUTPUT
+        os.makedirs(output_dir, exist_ok=True)
         
-        filepath = output_path + ".abc"
+        # Check for Alembic
+        try:
+            import alembic
+            from alembic import Abc, AbcGeom
+            has_alembic = True
+        except ImportError:
+            has_alembic = False
         
-        if not ALEMBIC_AVAILABLE:
-            print("[SAM4D Export] Alembic not available, falling back to OBJ sequence")
-            obj_dir = output_path + "_obj"
+        if not has_alembic:
+            print("[SAM4D Export] Alembic not available, exporting OBJ sequence")
+            obj_dir = os.path.join(output_dir, f"{filename}_obj")
             export_obj_sequence(obj_dir, seq, "mesh", coordinate_system)
             return (obj_dir,)
+        
+        filepath = os.path.join(output_dir, f"{filename}.abc")
         
         print(f"[SAM4D Export] Exporting Alembic: {filepath}")
         
         export_alembic(filepath, seq, coordinate_system)
         
-        print(f"[SAM4D Export] Alembic saved successfully")
+        print(f"[SAM4D Export] Alembic saved")
         
         return (filepath,)
+
+
+class SAM4DFBXViewer:
+    """
+    Display animated FBX in ComfyUI UI.
+    
+    Shows skeletal animation playback with play/pause controls,
+    timeline scrubber, and adjustable playback speed.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "fbx_path": ("STRING", {
+                    "forceInput": True,
+                    "tooltip": "Path to animated FBX file"
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("fbx_path",)
+    FUNCTION = "view_animation"
+    OUTPUT_NODE = True
+    CATEGORY = "SAM4DBodyCapture/Export"
+
+    def view_animation(self, fbx_path: str):
+        """Display animated FBX playback in ComfyUI UI."""
+        try:
+            print(f"[SAM4D FBX Viewer] Displaying: {fbx_path}")
+
+            return {
+                "ui": {
+                    "fbx_path": [fbx_path]
+                },
+                "result": (fbx_path,)
+            }
+
+        except Exception as e:
+            print(f"[SAM4D FBX Viewer] Error: {e}")
+            return {
+                "ui": {
+                    "fbx_path": [""]
+                },
+                "result": ("",)
+            }
 
 
 class SAM4DExportCameraFBX:
@@ -714,6 +901,7 @@ NODE_CLASS_MAPPINGS = {
     "SAM4DExportCharacterAlembic": SAM4DExportCharacterAlembic,
     "SAM4DExportCameraFBX": SAM4DExportCameraFBX,
     "SAM4DExportCameraJSON": SAM4DExportCameraJSON,
+    "SAM4DFBXViewer": SAM4DFBXViewer,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -721,4 +909,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SAM4DExportCharacterAlembic": "📦 Export Character Alembic",
     "SAM4DExportCameraFBX": "🎥 Export Camera FBX",
     "SAM4DExportCameraJSON": "🎥 Export Camera JSON",
+    "SAM4DFBXViewer": "🎥 FBX Animation Viewer",
 }

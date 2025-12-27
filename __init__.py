@@ -15,7 +15,7 @@ Version History:
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.3"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -115,6 +115,7 @@ try:
         "SAM4D_ExportCharacterAlembic": export_nodes.SAM4DExportCharacterAlembic,
         "SAM4D_ExportCameraFBX": export_nodes.SAM4DExportCameraFBX,
         "SAM4D_ExportCameraJSON": export_nodes.SAM4DExportCameraJSON,
+        "SAM4D_FBXViewer": export_nodes.SAM4DFBXViewer,
     })
     
     NODE_DISPLAY_NAME_MAPPINGS.update({
@@ -122,6 +123,7 @@ try:
         "SAM4D_ExportCharacterAlembic": "📦 Export Character Alembic",
         "SAM4D_ExportCameraFBX": "🎥 Export Camera FBX",
         "SAM4D_ExportCameraJSON": "🎥 Export Camera JSON",
+        "SAM4D_FBXViewer": "🎥 FBX Animation Viewer",
     })
     
     print(f"[SAM4DBodyCapture] Export nodes loaded")
@@ -130,6 +132,14 @@ except ImportError as e:
     print(f"[SAM4DBodyCapture] Export nodes not available: {e}")
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading Export nodes: {e}")
+
+# ==================== Final Setup ====================
+print(f"[SAM4DBodyCapture] v{__version__} loaded {len(NODE_CLASS_MAPPINGS)} nodes")
+
+# Web extension directory for FBX viewer
+WEB_DIRECTORY = "./web"
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
 
 # ==================== Summary ====================
 print(f"[SAM4DBodyCapture] v{__version__} - Loaded {len(NODE_CLASS_MAPPINGS)} nodes")

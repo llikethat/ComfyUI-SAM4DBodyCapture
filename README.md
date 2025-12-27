@@ -4,7 +4,7 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.3.3-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
@@ -47,7 +47,7 @@ Models download from HuggingFace on first use:
 | diffusion-vas-amodal-segmentation | ~2GB | Amodal mask prediction |
 | diffusion-vas-content-completion | ~2GB | RGB inpainting (optional) |
 
-## 🔧 Nodes (16 Total)
+## 🔧 Nodes (17 Total)
 
 ### SAM4D Pipeline Nodes
 
@@ -71,10 +71,11 @@ Models download from HuggingFace on first use:
 
 | Node | Description |
 |------|-------------|
-| 📦 **Export Character FBX** | ASCII FBX 7.4 (Maya, Blender, Unreal) |
+| 📦 **Export Character FBX** | Animated FBX via Blender (Maya, Blender, Unreal) |
 | 📦 **Export Character Alembic** | Point cache for VFX pipelines |
 | 🎥 **Export Camera FBX** | Camera animation FBX |
 | 🎥 **Export Camera JSON** | Universal camera format |
+| 🎥 **FBX Animation Viewer** | Interactive 3D viewer in ComfyUI |
 
 ### Diffusion-VAS Nodes (Standalone)
 
@@ -191,6 +192,18 @@ MIT License - see [LICENSE](LICENSE)
 | Depth Anything V2 | Apache 2.0 | ✅ Commercial OK |
 | SVD (in VAS) | Stability AI | ⚠️ Check if revenue >$1M |
 
+## 🗺️ Roadmap
+
+- [x] v0.1.0 - Diffusion-VAS skeleton
+- [x] v0.1.1 - Diffusion-VAS with depth
+- [x] v0.2.0 - SAM4D pipeline integration
+- [x] v0.3.0 - FBX/Alembic export
+- [x] v0.3.1 - SAM3D_OUTPUT compatibility
+- [x] v0.3.2 - Blender FBX export, FBX viewer
+- [x] v0.3.3 - External depth input support
+- [ ] v0.4.0 - Camera solver integration  
+- [ ] v1.0.0 - Stable release
+
 ## 🙏 Acknowledgments
 
 - [SAM-Body4D](https://github.com/gaomingqi/sam-body4d) - Mingqi Gao et al.
@@ -215,3 +228,8 @@ MIT License - see [LICENSE](LICENSE)
     year={2025}
 }
 ```
+
+## 📞 Support
+
+- [Issues](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/issues)
+- [Discussions](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/discussions)

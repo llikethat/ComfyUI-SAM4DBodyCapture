@@ -13,6 +13,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.3] - 2025-12-27
+
+### Added
+- **External depth input** - Both `SAM4DOcclusionDetector` and `DiffusionVASAmodalSegmentation` now accept optional `depth_maps` input
+- Connect any ComfyUI depth node: **Depth-Anything-V2**, **DepthCrafter**, **ZoeDepth**, etc.
+
+### Changed
+- Depth is now optional - uses gradient fallback if not provided
+- More flexible pipeline: use your preferred depth estimation method
+
+### Usage
+```
+[Depth-Anything-V2] → depth_maps → [SAM4D Occlusion Detector]
+```
+
+---
+
+## [0.3.2] - 2025-12-27
+
+### Added
+- **🎥 FBX Animation Viewer** node - Interactive 3D viewer with play/pause controls
+- **Bundled Diffusion-VAS** code in `lib/diffusion_vas/` for local pipeline loading
+- **Blender integration** - Uses Blender from SAM3DBody for animated FBX export
+
+### Fixed
+- **FBX Export** now uses Blender via SAM3DBody for proper animated export
+- **Output paths** now use ComfyUI's output directory (`folder_paths.get_output_directory()`)
+- **Depth estimation** gracefully falls back to gradient when models unavailable
+
+### Changed
+- Simplified VAS nodes (removed depth model selection - uses gradient fallback)
+- FBX export now takes `filename` parameter instead of full path
+
+### Technical Details
+- Blender path search: SAM3DBody bundled → workspace → system
+- VAS pipeline requires local code (HuggingFace models need custom UNet)
+- Web extension for FBX viewer with Three.js
+
+---
+
 ## [0.3.1] - 2025-12-27
 
 ### Fixed
