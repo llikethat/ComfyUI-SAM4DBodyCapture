@@ -195,11 +195,13 @@ class DiffusionVASWrapper:
         num_frames: int = None,  # Now optional, defaults to actual frame count
         seed: int = 23,
         depth_maps: torch.Tensor = None,
+        max_chunk_size: int = 25,  # Process in chunks to avoid OOM
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Run amodal segmentation (compatibility method for SAM4DPipelineLoader).
         
         Uses SAM-Body4D approach: pass actual frame count to pipeline.
+        For long videos, automatically chunks to avoid OOM.
         
         Args:
             images: Input images [B, H, W, C]
@@ -208,6 +210,7 @@ class DiffusionVASWrapper:
             num_frames: Number of frames (defaults to actual frame count)
             seed: Random seed
             depth_maps: Optional external depth maps [B, H, W, C]
+            max_chunk_size: Maximum frames per chunk (default 25)
         
         Returns:
             (amodal_masks, depth_maps) tuple
@@ -219,18 +222,85 @@ class DiffusionVASWrapper:
         original_size = (images.shape[1], images.shape[2])
         
         # SAM-Body4D approach: use actual frame count
-        if num_frames is None:
+        if num_frames is None or num_frames == 0:
             num_frames = B
         
         print(f"[VAS] Amodal segmentation: {B} frames, num_frames={num_frames}")
         
-        # Preprocess masks
-        processed_masks, _ = preprocess_masks(modal_masks, resolution)
-        
-        # Prepare depth
+        # Prepare depth output
         if depth_maps is not None:
             print("[VAS] Using external depth maps")
-            # Normalize external depth to [-1, 1] for VAS
+            depth_out = depth_maps[..., 0] if depth_maps.dim() == 4 else depth_maps
+        else:
+            print("[VAS] Using gradient depth fallback")
+            depth_pixels_full = estimate_depth_gradient(images, resolution)
+            depth_out = depth_pixels_full.squeeze(0)[:, 0, :, :]
+            depth_out = (depth_out + 1) / 2
+            depth_out = torch.nn.functional.interpolate(
+                depth_out.unsqueeze(1),
+                size=original_size,
+                mode='bilinear',
+                align_corners=False
+            ).squeeze(1)
+        
+        # If not loaded, return modal masks
+        if not self.amodal_loaded:
+            return modal_masks, depth_out
+        
+        # Check if we need chunking
+        if B <= max_chunk_size:
+            # Process all at once
+            amodal_masks = self._process_amodal_chunk(
+                images, modal_masks, depth_maps, resolution, B, seed, original_size
+            )
+        else:
+            # Process in chunks
+            print(f"[VAS] Chunking: {B} frames into chunks of {max_chunk_size}")
+            all_amodal = []
+            
+            for start in range(0, B, max_chunk_size):
+                end = min(start + max_chunk_size, B)
+                chunk_size = end - start
+                
+                print(f"[VAS] Processing chunk {start}-{end} ({chunk_size} frames)")
+                
+                # Extract chunk
+                chunk_images = images[start:end]
+                chunk_masks = modal_masks[start:end]
+                chunk_depth = depth_maps[start:end] if depth_maps is not None else None
+                
+                # Process chunk
+                chunk_amodal = self._process_amodal_chunk(
+                    chunk_images, chunk_masks, chunk_depth, 
+                    resolution, chunk_size, seed + start, original_size
+                )
+                all_amodal.append(chunk_amodal)
+                
+                # Clear cache between chunks
+                torch.cuda.empty_cache()
+            
+            # Concatenate all chunks
+            amodal_masks = torch.cat(all_amodal, dim=0)
+        
+        return amodal_masks, depth_out
+    
+    def _process_amodal_chunk(
+        self,
+        images: torch.Tensor,
+        modal_masks: torch.Tensor,
+        depth_maps: Optional[torch.Tensor],
+        resolution: Tuple[int, int],
+        num_frames: int,
+        seed: int,
+        original_size: Tuple[int, int],
+    ) -> torch.Tensor:
+        """Process a single chunk of frames through amodal segmentation."""
+        
+        # Preprocess masks for this chunk
+        processed_masks, _ = preprocess_masks(modal_masks, resolution)
+        
+        # Prepare depth for this chunk
+        if depth_maps is not None:
             depth_norm = depth_maps
             if depth_norm.dim() == 4:
                 depth_norm = depth_norm[..., 0]  # [B, H, W]
@@ -242,40 +312,25 @@ class DiffusionVASWrapper:
             )
             depth_pixels = depth_resized * 2 - 1  # [0,1] -> [-1,1]
             depth_pixels = depth_pixels.repeat(1, 3, 1, 1).unsqueeze(0)  # [1, B, 3, H, W]
-            
-            # Output depth
-            depth_out = depth_maps[..., 0] if depth_maps.dim() == 4 else depth_maps
         else:
-            print("[VAS] Using gradient depth fallback")
             depth_pixels = estimate_depth_gradient(images, resolution)
-            depth_out = depth_pixels.squeeze(0)[:, 0, :, :]
-            depth_out = (depth_out + 1) / 2
-            depth_out = torch.nn.functional.interpolate(
-                depth_out.unsqueeze(1),
-                size=original_size,
-                mode='bilinear',
-                align_corners=False
-            ).squeeze(1)
         
-        # Run amodal if loaded
-        if self.amodal_loaded:
-            # Pass actual frame count like SAM-Body4D does
-            output = self.amodal_segmentation(
-                processed_masks, depth_pixels, resolution, 
-                num_frames=num_frames,  # Dynamic!
-                seed=seed
-            )
-            if output is not None:
-                amodal_masks = postprocess_masks(output, original_size)
-                # Combine with modal
-                modal_union = (modal_masks > 0.5).float()
-                amodal_masks = torch.clamp(amodal_masks + modal_union, 0, 1)
-            else:
-                amodal_masks = modal_masks
+        # Run amodal
+        output = self.amodal_segmentation(
+            processed_masks, depth_pixels, resolution, 
+            num_frames=num_frames,
+            seed=seed
+        )
+        
+        if output is not None:
+            amodal_masks = postprocess_masks(output, original_size)
+            # Combine with modal
+            modal_union = (modal_masks > 0.5).float()
+            amodal_masks = torch.clamp(amodal_masks + modal_union, 0, 1)
         else:
             amodal_masks = modal_masks
         
-        return amodal_masks, depth_out
+        return amodal_masks
     
     def run_content_completion(
         self,
@@ -574,6 +629,9 @@ class DiffusionVASAmodalSegmentation:
     (Depth-Anything-V2, DepthCrafter, ZoeDepth, etc.)
     
     If no depth provided, uses gradient fallback.
+    
+    For long videos (>25 frames), automatically processes in chunks
+    to avoid GPU memory issues.
     """
     
     @classmethod
@@ -594,6 +652,12 @@ class DiffusionVASAmodalSegmentation:
                     "max": 256,
                     "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
                 }),
+                "chunk_size": ("INT", {
+                    "default": 25,
+                    "min": 4,
+                    "max": 64,
+                    "tooltip": "Max frames per chunk. Lower if OOM, higher if you have VRAM."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -603,7 +667,7 @@ class DiffusionVASAmodalSegmentation:
     FUNCTION = "segment"
     CATEGORY = "SAM4DBodyCapture/VAS"
     
-    def segment(self, vas_pipeline, images, masks, depth_maps=None, num_frames=0, seed=23):
+    def segment(self, vas_pipeline, images, masks, depth_maps=None, num_frames=0, chunk_size=25, seed=23):
         wrapper = vas_pipeline["wrapper"]
         resolution = vas_pipeline["resolution"]
         
@@ -613,7 +677,7 @@ class DiffusionVASAmodalSegmentation:
         # num_frames=0 means auto (use actual frame count) - SAM-Body4D approach
         actual_num_frames = B if num_frames == 0 else num_frames
         
-        print(f"[VAS] Amodal segmentation: {B} frames, num_frames={actual_num_frames}")
+        print(f"[VAS] Amodal segmentation: {B} frames, num_frames={actual_num_frames}, chunk_size={chunk_size}")
         
         # Use the unified run_amodal_segmentation which has chunking support
         amodal_masks, depth_out = wrapper.run_amodal_segmentation(
@@ -623,6 +687,7 @@ class DiffusionVASAmodalSegmentation:
             num_frames=actual_num_frames,
             seed=seed,
             depth_maps=depth_maps,
+            max_chunk_size=chunk_size,
         )
         
         # Ensure depth output format [B, H, W, 3]

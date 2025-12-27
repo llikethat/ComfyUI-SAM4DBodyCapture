@@ -13,6 +13,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.13] - 2025-12-27
+
+### Added
+- **Chunked Processing** - Long videos are now automatically processed in chunks to avoid OOM
+- **`chunk_size` parameter** - Adjustable chunk size (default 25, range 4-64) for all VAS/SAM4D nodes
+- Users with more VRAM can increase chunk_size, those with less can decrease it
+
+### Fixed
+- **OOM on long videos** - 50+ frame videos no longer crash with "Allocation on device" error
+- Processing now splits videos into chunks, processes each, and concatenates results
+- GPU cache is cleared between chunks to free memory
+
+### Technical Details
+The Diffusion-VAS pipeline (based on SVD) has memory constraints. Now we:
+1. Check if frame count > max_chunk_size (default 25)
+2. If so, split into chunks with overlap handling
+3. Process each chunk separately
+4. Concatenate results
+5. Clear CUDA cache between chunks
+
+```python
+# Example: 50 frames with chunk_size=25
+# Chunk 1: frames 0-24 (25 frames)
+# Chunk 2: frames 25-49 (25 frames)
+# Results concatenated → 50 amodal masks
+```
+
+### Affected Nodes
+- DiffusionVASAmodalSegmentation (new `chunk_size` param)
+- SAM4DOcclusionDetector (new `chunk_size` param)
+- SAM4DAmodalCompletion (new `chunk_size` param)
+
+---
+
 ## [0.3.12] - 2025-12-27
 
 ### Fixed

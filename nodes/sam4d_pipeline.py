@@ -304,6 +304,12 @@ class SAM4DOcclusionDetector:
                     "max": 256,
                     "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
                 }),
+                "chunk_size": ("INT", {
+                    "default": 25,
+                    "min": 4,
+                    "max": 64,
+                    "tooltip": "Max frames per chunk. Lower if OOM, higher if you have VRAM."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -322,6 +328,7 @@ class SAM4DOcclusionDetector:
         iou_threshold: float = 0.7,
         object_ids: str = "1",
         num_frames: int = 0,
+        chunk_size: int = 25,
         seed: int = 23,
     ):
         # Handle both pipeline types
@@ -375,6 +382,7 @@ class SAM4DOcclusionDetector:
                 resolution=resolution,
                 num_frames=actual_num_frames,
                 seed=seed,
+                max_chunk_size=chunk_size,
             )
             depth_out = depth_out.unsqueeze(-1).repeat(1, 1, 1, 3) if depth_out.dim() == 3 else depth_out
         else:
@@ -408,6 +416,7 @@ class SAM4DOcclusionDetector:
                 num_frames=actual_num_frames,
                 seed=seed,
                 depth_maps=depth_maps,  # Pass external depth
+                max_chunk_size=chunk_size,
             )
             
             # Compute IoU per frame
@@ -462,6 +471,12 @@ class SAM4DAmodalCompletion:
                     "max": 256,
                     "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
                 }),
+                "chunk_size": ("INT", {
+                    "default": 25,
+                    "min": 4,
+                    "max": 64,
+                    "tooltip": "Max frames per chunk. Lower if OOM, higher if you have VRAM."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -479,6 +494,7 @@ class SAM4DAmodalCompletion:
         pipeline: dict = None,
         complete_rgb: bool = False,
         num_frames: int = 0,
+        chunk_size: int = 25,
         seed: int = 23,
     ):
         # Handle both pipeline types
@@ -522,9 +538,9 @@ class SAM4DAmodalCompletion:
                 
                 obj_masks = (frame_masks == obj_id).float() if masks.max() > 1 else frame_masks.float()
                 
-                # num_frames=0 means auto - use chunk size
-                chunk_size = end - start + 1
-                actual_num_frames = chunk_size if num_frames == 0 else min(num_frames, chunk_size)
+                # num_frames=0 means auto - use range size
+                range_size = end - start + 1
+                actual_num_frames = range_size if num_frames == 0 else min(num_frames, range_size)
                 
                 # Run amodal segmentation
                 amodal_masks, _ = vas_wrapper.run_amodal_segmentation(
@@ -533,6 +549,7 @@ class SAM4DAmodalCompletion:
                     resolution=resolution,
                     num_frames=actual_num_frames,
                     seed=seed,
+                    max_chunk_size=chunk_size,
                 )
                 
                 # Update completed masks
