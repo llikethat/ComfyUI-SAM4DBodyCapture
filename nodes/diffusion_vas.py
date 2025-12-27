@@ -588,7 +588,12 @@ class DiffusionVASAmodalSegmentation:
                 "depth_maps": ("IMAGE", {
                     "tooltip": "External depth maps from any depth node (Depth-Anything, DepthCrafter, etc.)"
                 }),
-                "num_frames": ("INT", {"default": 25, "min": 1, "max": 64}),
+                "num_frames": ("INT", {
+                    "default": 0, 
+                    "min": 0, 
+                    "max": 256,
+                    "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -598,21 +603,24 @@ class DiffusionVASAmodalSegmentation:
     FUNCTION = "segment"
     CATEGORY = "SAM4DBodyCapture/VAS"
     
-    def segment(self, vas_pipeline, images, masks, depth_maps=None, num_frames=25, seed=23):
+    def segment(self, vas_pipeline, images, masks, depth_maps=None, num_frames=0, seed=23):
         wrapper = vas_pipeline["wrapper"]
         resolution = vas_pipeline["resolution"]
         
         B = images.shape[0]
         original_size = (images.shape[1], images.shape[2])
         
-        print(f"[VAS] Amodal segmentation: {B} frames, resolution={resolution}")
+        # num_frames=0 means auto (use actual frame count) - SAM-Body4D approach
+        actual_num_frames = B if num_frames == 0 else num_frames
+        
+        print(f"[VAS] Amodal segmentation: {B} frames, num_frames={actual_num_frames}")
         
         # Use the unified run_amodal_segmentation which has chunking support
         amodal_masks, depth_out = wrapper.run_amodal_segmentation(
             images=images,
             modal_masks=masks,
             resolution=resolution,
-            num_frames=num_frames,
+            num_frames=actual_num_frames,
             seed=seed,
             depth_maps=depth_maps,
         )
@@ -638,7 +646,12 @@ class DiffusionVASContentCompletion:
                 "amodal_masks": ("MASK",),
             },
             "optional": {
-                "num_frames": ("INT", {"default": 25, "min": 1, "max": 64}),
+                "num_frames": ("INT", {
+                    "default": 0, 
+                    "min": 0, 
+                    "max": 256,
+                    "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -648,12 +661,17 @@ class DiffusionVASContentCompletion:
     FUNCTION = "complete"
     CATEGORY = "SAM4DBodyCapture/VAS"
     
-    def complete(self, vas_pipeline, images, amodal_masks, num_frames=25, seed=23):
+    def complete(self, vas_pipeline, images, amodal_masks, num_frames=0, seed=23):
         wrapper = vas_pipeline["wrapper"]
         resolution = vas_pipeline["resolution"]
         
         if not wrapper.completion_loaded:
             return (images,)
+        
+        B = images.shape[0]
+        
+        # num_frames=0 means auto (use actual frame count) - SAM-Body4D approach
+        actual_num_frames = B if num_frames == 0 else num_frames
         
         rgb_pixels, original_size = preprocess_images(images, resolution)
         
@@ -664,7 +682,7 @@ class DiffusionVASContentCompletion:
         # Modal RGB
         modal_rgb = rgb_pixels * 2 - 1
         
-        completed = wrapper.content_completion(modal_rgb, amodal_tensor, resolution, num_frames, seed)
+        completed = wrapper.content_completion(modal_rgb, amodal_tensor, resolution, actual_num_frames, seed)
         
         if completed is None:
             return (images,)

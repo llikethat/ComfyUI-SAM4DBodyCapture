@@ -13,6 +13,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.12] - 2025-12-27
+
+### Fixed
+- **CRITICAL: num_frames Auto-Detection** - All nodes now default to `num_frames=0` which means "auto"
+- The v0.3.11 fix was incomplete - nodes were still passing hardcoded `num_frames=25` to the wrapper
+- Now properly uses SAM-Body4D approach: actual frame count is used by default
+
+### Technical Details
+The bug was that nodes had `num_frames=25` as default parameter value and passed it directly:
+
+```python
+# Before (broken):
+def segment(self, ..., num_frames=25, ...):
+    wrapper.run_amodal_segmentation(..., num_frames=num_frames)  # Always 25!
+
+# After (fixed):
+def segment(self, ..., num_frames=0, ...):
+    actual_num_frames = B if num_frames == 0 else num_frames  # Auto-detect!
+    wrapper.run_amodal_segmentation(..., num_frames=actual_num_frames)
+```
+
+### Changed
+- `num_frames` parameter now accepts 0-256 range (was 1-64 or 4-64)
+- Default `num_frames=0` means auto (use actual frame count)
+- Added tooltips explaining the auto behavior
+
+### Affected Nodes
+- DiffusionVASAmodalSegmentation
+- DiffusionVASContentCompletion  
+- SAM4DOcclusionDetector
+- SAM4DAmodalCompletion
+
+---
+
 ## [0.3.11] - 2025-12-27
 
 ### Fixed

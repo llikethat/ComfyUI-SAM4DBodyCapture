@@ -298,7 +298,12 @@ class SAM4DOcclusionDetector:
                 }),
                 "iou_threshold": ("FLOAT", {"default": 0.7, "min": 0.3, "max": 0.95, "step": 0.05}),
                 "object_ids": ("STRING", {"default": "1", "tooltip": "Comma-separated object IDs"}),
-                "num_frames": ("INT", {"default": 25, "min": 4, "max": 64}),
+                "num_frames": ("INT", {
+                    "default": 0, 
+                    "min": 0, 
+                    "max": 256,
+                    "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -316,7 +321,7 @@ class SAM4DOcclusionDetector:
         depth_maps: torch.Tensor = None,
         iou_threshold: float = 0.7,
         object_ids: str = "1",
-        num_frames: int = 25,
+        num_frames: int = 0,
         seed: int = 23,
     ):
         # Handle both pipeline types
@@ -341,7 +346,10 @@ class SAM4DOcclusionDetector:
         B = images.shape[0]
         H, W = images.shape[1:3]
         
-        print(f"[SAM4D] Detecting occlusions for {B} frames, objects: {obj_ids}")
+        # num_frames=0 means auto (use actual frame count) - SAM-Body4D approach
+        actual_num_frames = B if num_frames == 0 else num_frames
+        
+        print(f"[SAM4D] Detecting occlusions for {B} frames, objects: {obj_ids}, num_frames={actual_num_frames}")
         
         # Ensure masks shape
         if masks.dim() == 2:
@@ -365,7 +373,7 @@ class SAM4DOcclusionDetector:
                 images=images,
                 modal_masks=masks,
                 resolution=resolution,
-                num_frames=num_frames,
+                num_frames=actual_num_frames,
                 seed=seed,
             )
             depth_out = depth_out.unsqueeze(-1).repeat(1, 1, 1, 3) if depth_out.dim() == 3 else depth_out
@@ -397,7 +405,7 @@ class SAM4DOcclusionDetector:
                 images=images,
                 modal_masks=obj_masks,
                 resolution=resolution,
-                num_frames=num_frames,
+                num_frames=actual_num_frames,
                 seed=seed,
                 depth_maps=depth_maps,  # Pass external depth
             )
@@ -448,7 +456,12 @@ class SAM4DAmodalCompletion:
             "optional": {
                 "pipeline": ("SAM4D_PIPELINE,VAS_PIPELINE",),
                 "complete_rgb": ("BOOLEAN", {"default": False}),
-                "num_frames": ("INT", {"default": 25, "min": 4, "max": 64}),
+                "num_frames": ("INT", {
+                    "default": 0, 
+                    "min": 0, 
+                    "max": 256,
+                    "tooltip": "0 = auto (use actual frame count). Set manually only if needed."
+                }),
                 "seed": ("INT", {"default": 23}),
             }
         }
@@ -465,7 +478,7 @@ class SAM4DAmodalCompletion:
         occlusion_info: dict,
         pipeline: dict = None,
         complete_rgb: bool = False,
-        num_frames: int = 25,
+        num_frames: int = 0,
         seed: int = 23,
     ):
         # Handle both pipeline types
@@ -509,12 +522,16 @@ class SAM4DAmodalCompletion:
                 
                 obj_masks = (frame_masks == obj_id).float() if masks.max() > 1 else frame_masks.float()
                 
+                # num_frames=0 means auto - use chunk size
+                chunk_size = end - start + 1
+                actual_num_frames = chunk_size if num_frames == 0 else min(num_frames, chunk_size)
+                
                 # Run amodal segmentation
                 amodal_masks, _ = vas_wrapper.run_amodal_segmentation(
                     images=frame_images,
                     modal_masks=obj_masks,
                     resolution=resolution,
-                    num_frames=min(num_frames, end - start + 1),
+                    num_frames=actual_num_frames,
                     seed=seed,
                 )
                 
@@ -530,7 +547,7 @@ class SAM4DAmodalCompletion:
                         images=frame_images,
                         amodal_masks=amodal_masks,
                         resolution=resolution,
-                        num_frames=min(num_frames, end - start + 1),
+                        num_frames=actual_num_frames,
                         seed=seed,
                     )
                     completed_images[start:end+1] = completed_rgb.to(completed_images.device)

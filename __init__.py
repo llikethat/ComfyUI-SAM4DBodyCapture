@@ -15,7 +15,7 @@ Version History:
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.3.11"
+__version__ = "0.3.12"
 __author__ = "llikethat"
 __license__ = "MIT"
 
