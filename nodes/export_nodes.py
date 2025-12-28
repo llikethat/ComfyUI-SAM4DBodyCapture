@@ -579,6 +579,36 @@ class SAM4DExportCharacterFBX:
     CATEGORY = "SAM4DBodyCapture/Export"
     OUTPUT_NODE = True
     
+    def _get_incremental_filepath(self, output_dir: str, filename: str, extension: str) -> str:
+        """
+        Generate incremental filepath to avoid overwriting existing files.
+        
+        Examples:
+            sam4d_animation.fbx
+            sam4d_animation_0001.fbx
+            sam4d_animation_0002.fbx
+        """
+        base_path = os.path.join(output_dir, f"{filename}{extension}")
+        
+        # If file doesn't exist, use the base name
+        if not os.path.exists(base_path):
+            return base_path
+        
+        # Find next available number
+        counter = 1
+        while True:
+            numbered_path = os.path.join(output_dir, f"{filename}_{counter:04d}{extension}")
+            if not os.path.exists(numbered_path):
+                return numbered_path
+            counter += 1
+            
+            # Safety limit to avoid infinite loop
+            if counter > 9999:
+                # Fallback with timestamp
+                import time
+                timestamp = int(time.time())
+                return os.path.join(output_dir, f"{filename}_{timestamp}{extension}")
+    
     def export(
         self,
         mesh_sequence: dict,
@@ -609,7 +639,9 @@ class SAM4DExportCharacterFBX:
         output_dir = COMFYUI_OUTPUT
         os.makedirs(output_dir, exist_ok=True)
         
-        output_path = os.path.join(output_dir, f"{filename}.fbx")
+        # Generate incremental filename to avoid overwriting
+        output_path = self._get_incremental_filepath(output_dir, filename, ".fbx")
+        print(f"[SAM4D Export] Output file: {os.path.basename(output_path)}")
         
         # Build JSON for Blender script
         up_axis = "Y" if "Y-up" in coordinate_system else "Z"
