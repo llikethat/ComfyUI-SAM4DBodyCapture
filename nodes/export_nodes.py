@@ -556,6 +556,10 @@ class SAM4DExportCharacterFBX:
                 }),
                 "coordinate_system": (cls.COORD_SYSTEMS, {"default": "Y-up (Maya/Blender)"}),
                 "fps": ("FLOAT", {"default": 30.0, "min": 1.0, "max": 120.0}),
+                "flip_x": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Mirror mesh on X axis (usually needed for correct left/right orientation)"
+                }),
                 "include_camera": ("BOOLEAN", {
                     "default": True,
                     "tooltip": "Include camera in FBX (recommended)"
@@ -582,6 +586,7 @@ class SAM4DExportCharacterFBX:
         camera_intrinsics: dict = None,
         coordinate_system: str = "Y-up (Maya/Blender)",
         fps: float = 30.0,
+        flip_x: bool = True,
         include_camera: bool = True,
         sensor_width: float = 36.0,
     ):
@@ -590,6 +595,8 @@ class SAM4DExportCharacterFBX:
         if seq.frame_count == 0:
             print("[SAM4D Export] No frames in sequence")
             return ("",)
+        
+        print(f"[SAM4D Export] flip_x={flip_x}")
         
         # Find Blender
         blender_path = find_blender()
@@ -620,6 +627,14 @@ class SAM4DExportCharacterFBX:
         
         frames_data = []
         for i, vertices in enumerate(seq.vertices):
+            # Apply flip_x if needed (mirror on X axis)
+            if flip_x:
+                if isinstance(vertices, np.ndarray):
+                    vertices = vertices.copy()
+                    vertices[:, 0] = -vertices[:, 0]
+                else:
+                    vertices = [[-v[0], v[1], v[2]] for v in vertices]
+            
             frame_data = {
                 "frame_index": i,
                 "vertices": vertices.tolist() if isinstance(vertices, np.ndarray) else vertices,
@@ -643,7 +658,10 @@ class SAM4DExportCharacterFBX:
                     if "joint_coords" in seq.params and i < len(seq.params.get("joint_coords", [])):
                         jc = seq.params["joint_coords"][i]
                         if jc is not None:
-                            frame_data['joint_coords'] = jc.tolist() if hasattr(jc, 'tolist') else jc
+                            jc_arr = np.array(jc) if not isinstance(jc, np.ndarray) else jc.copy()
+                            if flip_x:
+                                jc_arr[:, 0] = -jc_arr[:, 0]  # Flip X for joint coords too
+                            frame_data['joint_coords'] = jc_arr.tolist()
                     if "joint_rotations" in seq.params and i < len(seq.params.get("joint_rotations", [])):
                         jr = seq.params["joint_rotations"][i]
                         if jr is not None:
@@ -658,7 +676,10 @@ class SAM4DExportCharacterFBX:
                     if isinstance(params, dict):
                         if 'joint_coords' in params:
                             jc = params['joint_coords']
-                            frame_data['joint_coords'] = jc.tolist() if hasattr(jc, 'tolist') else jc
+                            jc_arr = np.array(jc) if not isinstance(jc, np.ndarray) else jc.copy()
+                            if flip_x:
+                                jc_arr[:, 0] = -jc_arr[:, 0]  # Flip X for joint coords too
+                            frame_data['joint_coords'] = jc_arr.tolist()
                         if 'joint_rotations' in params:
                             jr = params['joint_rotations']
                             frame_data['joint_rotations'] = jr.tolist() if hasattr(jr, 'tolist') else jr

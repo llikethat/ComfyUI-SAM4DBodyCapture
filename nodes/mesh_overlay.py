@@ -2,7 +2,16 @@
 Mesh Overlay Visualization Node for ComfyUI-SAM4DBodyCapture
 
 Uses SAM3DBody's pyrender-based Renderer for proper mesh visualization.
+Follows the same approach as SAM3DBody's process_multiple.py
 """
+
+import os
+import sys
+from pathlib import Path
+
+# Set up pyrender for headless rendering BEFORE importing
+if "PYOPENGL_PLATFORM" not in os.environ:
+    os.environ["PYOPENGL_PLATFORM"] = "egl"
 
 import torch
 import numpy as np
@@ -10,14 +19,34 @@ from typing import Tuple, Optional, Dict
 import cv2
 
 
+def _setup_sam3dbody_path():
+    """Add SAM3DBody to path if available."""
+    # Try common locations
+    possible_paths = [
+        Path(__file__).parent.parent.parent / "ComfyUI-SAM3DBody-main",
+        Path(__file__).parent.parent.parent / "ComfyUI-SAM3DBody",
+        Path(__file__).parent.parent.parent.parent / "ComfyUI-SAM3DBody-main",
+        Path(__file__).parent.parent.parent.parent / "ComfyUI-SAM3DBody",
+        Path.home() / "ComfyUI" / "custom_nodes" / "ComfyUI-SAM3DBody-main",
+        Path.home() / "ComfyUI" / "custom_nodes" / "ComfyUI-SAM3DBody",
+    ]
+    
+    for p in possible_paths:
+        if p.exists() and str(p) not in sys.path:
+            sys.path.insert(0, str(p))
+            print(f"[MeshOverlay] Added SAM3DBody path: {p}")
+            return True
+    return False
+
+# Try to set up path on module load
+_setup_sam3dbody_path()
+
+
 class SAM4DMeshSequenceOverlay:
     """
     Overlay mesh sequence on video frames using SAM3DBody's Renderer.
     
-    Uses the same visualization approach as SAM-Body4D/SAM3DBody.
-    
-    Input: SAM4D_MESH_SEQUENCE from SAM4DBodyBatchProcess or SAM4DTemporalSmoothing
-    Output: IMAGE with mesh rendered on top
+    Uses the same visualization approach as SAM3DBody's _create_multi_person_preview.
     """
     
     RENDER_MODES = ["overlay", "mesh_only", "side_by_side"]
@@ -48,6 +77,132 @@ class SAM4DMeshSequenceOverlay:
     RETURN_NAMES = ("rendered_images",)
     FUNCTION = "render"
     CATEGORY = "SAM4DBodyCapture/Visualization"
+    
+    def _render_frame_pyrender(self, img_bgr, verts, faces, cam_t, focal, mesh_color, render_mode):
+        """Render single frame using SAM3DBody's Renderer - matches their approach exactly."""
+        from sam_3d_body.visualization.renderer import Renderer
+        
+        h, w = img_bgr.shape[:2]
+        
+        # Create renderer (same as SAM3DBody process_multiple.py)
+        renderer = Renderer(
+            focal_length=focal,
+            faces=faces,
+        )
+        
+        if render_mode == "mesh_only":
+            # Render on black background
+            render_result = renderer.render_rgba_multiple(
+                [verts],
+                [cam_t],
+                render_res=(w, h),
+                mesh_base_color=mesh_color,
+            )
+            
+            if render_result is not None:
+                # render_rgba_multiple returns float [0-1] with RGBA
+                if render_result.shape[-1] == 4:
+                    # Convert RGBA to BGR
+                    render_rgb = (render_result[:, :, :3] * 255).astype(np.uint8)
+                    render_bgr = cv2.cvtColor(render_rgb, cv2.COLOR_RGB2BGR)
+                    return render_bgr
+            
+            return np.zeros_like(img_bgr)
+        
+        else:  # overlay
+            # Use render_rgba_multiple like SAM3DBody does
+            render_result = renderer.render_rgba_multiple(
+                [verts],
+                [cam_t],
+                render_res=(w, h),
+                mesh_base_color=mesh_color,
+            )
+            
+            if render_result is not None:
+                # Composite onto original (same as SAM3DBody)
+                if render_result.shape[-1] == 4:
+                    # Alpha compositing
+                    alpha = render_result[:, :, 3:4]  # Already 0-1 from render_rgba_multiple
+                    render_rgb = (render_result[:, :, :3] * 255).astype(np.uint8)
+                    render_bgr = cv2.cvtColor(render_rgb, cv2.COLOR_RGB2BGR)
+                    
+                    # Blend: result = img * (1 - alpha) + render * alpha
+                    result = (img_bgr.astype(np.float32) * (1 - alpha) + 
+                             render_bgr.astype(np.float32) * alpha).astype(np.uint8)
+                    return result
+            
+            return img_bgr
+    
+    def _render_frame_fallback(self, img_bgr, verts, faces, cam_t, focal, mesh_color):
+        """Fallback: draw solid triangles with depth sorting (better than just points)."""
+        result = img_bgr.copy()
+        h, w = img_bgr.shape[:2]
+        
+        # Apply camera translation
+        verts_world = verts.copy()
+        verts_world = verts_world + cam_t
+        
+        # Apply 180° rotation around X (same as renderer.py line 209)
+        verts_world[:, 1] *= -1
+        verts_world[:, 2] *= -1
+        
+        # Perspective projection
+        z = verts_world[:, 2:3]
+        z = np.maximum(z, 0.1)
+        
+        x_2d = focal * verts_world[:, 0:1] / z + w / 2
+        y_2d = focal * verts_world[:, 1:2] / z + h / 2
+        
+        pts_2d = np.concatenate([x_2d, y_2d], axis=1)
+        
+        # Calculate face depths for sorting (use average Z of vertices)
+        face_depths = []
+        for face in faces:
+            avg_z = (verts_world[face[0], 2] + verts_world[face[1], 2] + verts_world[face[2], 2]) / 3
+            face_depths.append(avg_z)
+        
+        # Sort faces by depth (far to near for painter's algorithm)
+        sorted_indices = np.argsort(face_depths)[::-1]
+        
+        # Draw solid triangles
+        color_bgr = (int(mesh_color[2] * 255), int(mesh_color[1] * 255), int(mesh_color[0] * 255))
+        
+        # Create overlay for blending
+        overlay = result.copy()
+        
+        for idx in sorted_indices:
+            face = faces[idx]
+            pts = pts_2d[face].astype(np.int32)
+            
+            # Check if triangle is visible (all points roughly in frame)
+            if (np.all(pts[:, 0] >= -w) and np.all(pts[:, 0] < 2*w) and
+                np.all(pts[:, 1] >= -h) and np.all(pts[:, 1] < 2*h)):
+                
+                # Calculate face normal for basic shading
+                v0, v1, v2 = verts_world[face[0]], verts_world[face[1]], verts_world[face[2]]
+                edge1 = v1 - v0
+                edge2 = v2 - v0
+                normal = np.cross(edge1, edge2)
+                normal_len = np.linalg.norm(normal)
+                
+                if normal_len > 1e-6:
+                    normal = normal / normal_len
+                    # Simple lighting: dot product with view direction (0, 0, -1)
+                    light_intensity = max(0.3, abs(normal[2]))
+                else:
+                    light_intensity = 0.5
+                
+                # Apply shading to color
+                shaded_color = tuple(int(c * light_intensity) for c in color_bgr)
+                
+                # Draw filled triangle
+                cv2.fillPoly(overlay, [pts], shaded_color)
+        
+        # Blend overlay with original (semi-transparent mesh)
+        alpha = 0.7
+        result = cv2.addWeighted(result, 1 - alpha, overlay, alpha, 0)
+        
+        return result
     
     def render(
         self,
@@ -88,47 +243,58 @@ class SAM4DMeshSequenceOverlay:
         
         # Get camera parameters from intrinsics or defaults
         if camera_intrinsics is not None:
-            default_focal = camera_intrinsics.get("focal_length", max(H, W))
-            cx = camera_intrinsics.get("cx", W / 2.0)
-            cy = camera_intrinsics.get("cy", H / 2.0)
+            default_focal = camera_intrinsics.get("focal_length", 5000.0)
             per_frame_focal = camera_intrinsics.get("per_frame_focal", None)
-            print(f"[MeshOverlay] Using camera intrinsics: focal={default_focal:.1f}, cx={cx:.1f}, cy={cy:.1f}")
+            print(f"[MeshOverlay] Using camera intrinsics: focal={default_focal:.1f}")
         else:
-            default_focal = max(H, W)
-            cx = W / 2.0
-            cy = H / 2.0
+            default_focal = 5000.0  # SAM3DBody default
             per_frame_focal = None
-            print(f"[MeshOverlay] Using default camera: focal={default_focal:.1f}")
+            print(f"[MeshOverlay] Using default focal: {default_focal:.1f}")
         
-        # Try to import SAM3DBody's Renderer
+        # Check if pyrender renderer is available
+        USE_PYRENDER = False
+        pyrender_error = None
         try:
+            # Try to set up path again
+            _setup_sam3dbody_path()
             from sam_3d_body.visualization.renderer import Renderer
+            
+            # Also check pyrender itself
+            import pyrender
+            import trimesh
+            
             USE_PYRENDER = True
             print("[MeshOverlay] Using SAM3DBody pyrender Renderer")
-        except ImportError:
-            USE_PYRENDER = False
-            print("[MeshOverlay] SAM3DBody Renderer not available, using simple wireframe")
+        except ImportError as e:
+            pyrender_error = str(e)
+            print(f"[MeshOverlay] Pyrender not available: {pyrender_error}")
+            print("[MeshOverlay] Using solid mesh fallback (depth-sorted triangles)")
+        except Exception as e:
+            pyrender_error = str(e)
+            print(f"[MeshOverlay] Renderer error: {pyrender_error}")
+            print("[MeshOverlay] Using solid mesh fallback")
         
         result_frames = []
         
         for i in range(B):
-            # Get frame image (convert to numpy uint8)
+            # Get frame image as BGR (SAM3DBody uses BGR internally)
             img = images[i].cpu().numpy()
             if img.max() <= 1.0:
                 img = (img * 255).astype(np.uint8)
             else:
                 img = img.astype(np.uint8)
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
             
             # Get vertices for this frame
             if i < len(vertices_list) and vertices_list[i] is not None:
                 verts = vertices_list[i]
                 if isinstance(verts, torch.Tensor):
                     verts = verts.cpu().numpy()
-                verts = np.asarray(verts)
+                verts = np.asarray(verts).copy()
             elif len(vertices_list) > 0 and vertices_list[0] is not None:
-                verts = np.asarray(vertices_list[0])
+                verts = np.asarray(vertices_list[0]).copy()
             else:
-                result_frames.append(img)
+                result_frames.append(img)  # Return RGB
                 continue
             
             # Get camera translation for this frame
@@ -136,9 +302,8 @@ class SAM4DMeshSequenceOverlay:
                 cam_t = cam_t_list[i]
                 if isinstance(cam_t, torch.Tensor):
                     cam_t = cam_t.cpu().numpy()
-                cam_t = np.asarray(cam_t).flatten()
+                cam_t = np.asarray(cam_t).flatten().copy()
             else:
-                # Default camera translation
                 cam_t = np.array([0, 0, 2.5])
             
             # Get focal length for this frame
@@ -153,52 +318,29 @@ class SAM4DMeshSequenceOverlay:
             else:
                 focal = default_focal
             
+            # Render frame
             if USE_PYRENDER:
                 try:
-                    renderer = Renderer(focal_length=focal, faces=faces)
-                    
-                    # SAM3DBody renderer expects camera_center
-                    camera_center = [cx, cy]
-                    
-                    if render_mode == "overlay":
-                        rendered = renderer(
-                            vertices=verts,
-                            cam_t=cam_t,
-                            image=img.astype(np.float32),
-                            mesh_base_color=mesh_color,
-                            camera_center=camera_center,
-                        )
-                        rendered = (rendered * 255).astype(np.uint8)
-                    elif render_mode == "mesh_only":
-                        rendered = renderer(
-                            vertices=verts,
-                            cam_t=cam_t,
-                            image=np.zeros_like(img, dtype=np.float32),
-                            mesh_base_color=mesh_color,
-                            scene_bg_color=(0, 0, 0),
-                            camera_center=camera_center,
-                        )
-                        rendered = (rendered * 255).astype(np.uint8)
-                    else:  # side_by_side
-                        overlay = renderer(
-                            vertices=verts,
-                            cam_t=cam_t,
-                            image=img.astype(np.float32),
-                            mesh_base_color=mesh_color,
-                            camera_center=camera_center,
-                        )
-                        overlay = (overlay * 255).astype(np.uint8)
-                        rendered = np.hstack([img, overlay])
-                    
-                    result_frames.append(rendered)
-                    
+                    rendered_bgr = self._render_frame_pyrender(
+                        img_bgr, verts, faces, cam_t, focal, mesh_color, render_mode
+                    )
                 except Exception as e:
-                    print(f"[MeshOverlay] Renderer error frame {i}: {e}")
-                    # Fallback to simple wireframe
-                    result_frames.append(self._draw_wireframe(img, verts, faces, cam_t, focal, cx, cy, mesh_color))
+                    print(f"[MeshOverlay] Pyrender error frame {i}: {e}")
+                    rendered_bgr = self._render_frame_fallback(
+                        img_bgr, verts, faces, cam_t, focal, mesh_color
+                    )
             else:
-                # Simple wireframe fallback
-                result_frames.append(self._draw_wireframe(img, verts, faces, cam_t, focal, cx, cy, mesh_color))
+                rendered_bgr = self._render_frame_fallback(
+                    img_bgr, verts, faces, cam_t, focal, mesh_color
+                )
+            
+            # Convert back to RGB for ComfyUI
+            if render_mode == "side_by_side":
+                rendered_rgb = np.hstack([img, cv2.cvtColor(rendered_bgr, cv2.COLOR_BGR2RGB)])
+            else:
+                rendered_rgb = cv2.cvtColor(rendered_bgr, cv2.COLOR_BGR2RGB)
+            
+            result_frames.append(rendered_rgb)
             
             if (i + 1) % 10 == 0:
                 print(f"[MeshOverlay] Rendered frame {i + 1}/{B}")
@@ -210,40 +352,6 @@ class SAM4DMeshSequenceOverlay:
         print(f"[MeshOverlay] Rendered {len(result_frames)} frames in '{render_mode}' mode")
         
         return (result_tensor,)
-    
-    def _draw_wireframe(self, img, verts, faces, cam_t, focal, cx, cy, mesh_color):
-        """Simple wireframe rendering fallback."""
-        result = img.copy()
-        H, W = img.shape[:2]
-        
-        # Apply camera translation and flip for rendering coordinate system
-        verts_cam = verts.copy()
-        verts_cam[:, 0] = -verts_cam[:, 0]  # Flip X (matches SAM3DBody renderer)
-        verts_cam = verts_cam + cam_t
-        
-        # Perspective projection
-        z = verts_cam[:, 2:3]
-        z = np.maximum(z, 0.1)
-        
-        x_2d = focal * verts_cam[:, 0:1] / z + cx
-        y_2d = focal * verts_cam[:, 1:2] / z + cy
-        
-        pts_2d = np.concatenate([x_2d, y_2d], axis=1).astype(np.int32)
-        
-        # Draw wireframe edges
-        color_bgr = (int(mesh_color[2] * 255), int(mesh_color[1] * 255), int(mesh_color[0] * 255))
-        
-        for face in faces:
-            for j in range(3):
-                p1 = pts_2d[face[j]]
-                p2 = pts_2d[face[(j + 1) % 3]]
-                
-                # Check if both points are within bounds
-                if (0 <= p1[0] < W and 0 <= p1[1] < H and
-                    0 <= p2[0] < W and 0 <= p2[1] < H):
-                    cv2.line(result, tuple(p1), tuple(p2), color_bgr, 1, cv2.LINE_AA)
-        
-        return result
 
 
 class SAM4DDepthOverlay:
@@ -335,8 +443,9 @@ class SAM4DDepthOverlay:
             # Apply colormap
             if cmap is not None:
                 depth_color = cv2.applyColorMap(depth_norm, cmap)
+                depth_color = cv2.cvtColor(depth_color, cv2.COLOR_BGR2RGB)  # Convert to RGB
             else:
-                depth_color = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2BGR)
+                depth_color = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2RGB)
             
             # Resize depth to match image if needed
             if depth_color.shape[:2] != (H, W):

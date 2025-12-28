@@ -321,8 +321,16 @@ class SAM4DBodyBatchProcess:
             bbox = self._compute_bbox_from_mask(mask_np)
             if bbox is None:
                 print(f"\n  Warning: No person detected in frame {frame_idx}, using previous")
-                if len(mesh_sequence["frames"]) > 0:
-                    mesh_sequence["frames"].append(mesh_sequence["frames"][-1].copy())
+                if len(mesh_sequence["vertices"]) > 0:
+                    # Copy previous frame's data
+                    mesh_sequence["vertices"].append(mesh_sequence["vertices"][-1].copy())
+                    for key in mesh_sequence["params"]:
+                        if len(mesh_sequence["params"][key]) > 0:
+                            mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
+                    mesh_sequence["frame_count"] += 1
+                    debug_images.append(img_np)  # Still add debug image
+                else:
+                    print(f"\n  Warning: First frame has no detection, skipping")
                 continue
             
             # Build camera intrinsics matrix for this frame
@@ -381,6 +389,9 @@ class SAM4DBodyBatchProcess:
                         if mesh_sequence["params"][key]:
                             mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
                     mesh_sequence["frame_count"] += 1
+                    debug_images.append(img_np)  # Still add debug image
+                else:
+                    print(f"\n  Warning: First frame failed, skipping")
                 continue
             
             # Get the requested person (or first if not enough detected)
@@ -409,6 +420,17 @@ class SAM4DBodyBatchProcess:
             debug_images.append(img_np)
         
         print(f"\n[SAM4DBodyCapture] Processed {mesh_sequence['frame_count']} frames successfully")
+        
+        # Validate we have at least one frame
+        if mesh_sequence["frame_count"] == 0 or len(mesh_sequence["vertices"]) == 0:
+            raise RuntimeError(
+                f"No frames were successfully processed! "
+                f"Check that your masks properly cover the person in the video."
+            )
+        
+        # Handle case where debug_images might be shorter than vertices (shouldn't happen but be safe)
+        if len(debug_images) == 0:
+            debug_images = [(images[0].cpu().numpy() * 255).astype(np.uint8)]
         
         # Stack debug images
         debug_tensor = torch.from_numpy(

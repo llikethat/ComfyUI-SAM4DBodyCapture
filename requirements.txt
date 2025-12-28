@@ -1,6 +1,6 @@
 # ComfyUI-SAM4DBodyCapture Requirements
 # ======================================
-# Version: 0.4.0 (MoGe2 Camera Integration)
+# Version: 0.4.1 (Mesh Overlay Visualization)
 
 # Core dependencies
 torch>=2.0.0
@@ -25,6 +25,18 @@ scipy>=1.7.0
 omegaconf>=2.0.0
 imageio>=2.9.0
 tqdm>=4.60.0
+
+# ============================================
+# Visualization dependencies (v0.4.1+)
+# ============================================
+# Required for proper 3D mesh rendering overlay
+pyrender>=0.1.45
+trimesh>=3.10.0
+PyOpenGL>=3.1.0
+
+# For headless rendering (server/docker)
+# You may also need: apt-get install libosmesa6-dev freeglut3-dev
+# Or use EGL: export PYOPENGL_PLATFORM=egl
 
 # ============================================
 # MoGe2 - Camera intrinsics estimation (v0.4.0+)
