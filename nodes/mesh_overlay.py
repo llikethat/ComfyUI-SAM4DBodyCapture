@@ -1,419 +1,256 @@
 """
 Mesh Overlay Visualization Node for ComfyUI-SAM4DBodyCapture
 
-Renders 3D body mesh overlaid on original background images for verification.
-Uses camera intrinsics (from MoGe2 or manual) for proper projection.
-
-This allows you to verify that:
-1. The 3D mesh aligns with the person in the video
-2. Camera intrinsics are correct
-3. The reconstruction quality is acceptable before FBX export
+Uses SAM3DBody's pyrender-based Renderer for proper mesh visualization.
 """
 
 import torch
 import numpy as np
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict
 import cv2
 
-# Try to import trimesh for mesh handling
-TRIMESH_AVAILABLE = False
-try:
-    import trimesh
-    TRIMESH_AVAILABLE = True
-except ImportError:
-    pass
 
-
-def project_3d_to_2d(
-    points_3d: np.ndarray,
-    focal_length: float,
-    cx: float,
-    cy: float,
-    rotation: np.ndarray = None,
-    translation: np.ndarray = None,
-) -> np.ndarray:
+class SAM4DMeshSequenceOverlay:
     """
-    Project 3D points to 2D image coordinates.
+    Overlay mesh sequence on video frames using SAM3DBody's Renderer.
     
-    Args:
-        points_3d: 3D points [N, 3]
-        focal_length: Camera focal length in pixels
-        cx, cy: Principal point
-        rotation: Optional rotation matrix [3, 3]
-        translation: Optional translation vector [3]
+    Uses the same visualization approach as SAM-Body4D/SAM3DBody.
     
-    Returns:
-        2D points [N, 2]
-    """
-    points = points_3d.copy()
-    
-    # Apply rotation and translation if provided
-    if rotation is not None:
-        points = points @ rotation.T
-    if translation is not None:
-        points = points + translation
-    
-    # Perspective projection
-    # x' = f * X / Z + cx
-    # y' = f * Y / Z + cy
-    z = points[:, 2:3]
-    z = np.maximum(z, 1e-6)  # Avoid division by zero
-    
-    x_2d = focal_length * points[:, 0:1] / z + cx
-    y_2d = focal_length * points[:, 1:2] / z + cy
-    
-    return np.concatenate([x_2d, y_2d], axis=1)
-
-
-def draw_mesh_wireframe(
-    image: np.ndarray,
-    vertices_2d: np.ndarray,
-    faces: np.ndarray,
-    color: Tuple[int, int, int] = (0, 255, 0),
-    thickness: int = 1,
-    alpha: float = 0.5,
-) -> np.ndarray:
-    """
-    Draw mesh wireframe on image.
-    
-    Args:
-        image: Background image [H, W, 3]
-        vertices_2d: 2D vertex positions [V, 2]
-        faces: Face indices [F, 3]
-        color: Line color (B, G, R)
-        thickness: Line thickness
-        alpha: Overlay transparency
-    
-    Returns:
-        Image with wireframe overlay
-    """
-    overlay = image.copy()
-    H, W = image.shape[:2]
-    
-    for face in faces:
-        pts = vertices_2d[face].astype(np.int32)
-        
-        # Check if all points are within image bounds
-        if np.all((pts >= 0) & (pts[:, 0] < W) & (pts[:, 1] < H)):
-            # Draw triangle edges
-            for i in range(3):
-                p1 = tuple(pts[i])
-                p2 = tuple(pts[(i + 1) % 3])
-                cv2.line(overlay, p1, p2, color, thickness)
-    
-    # Blend with original
-    result = cv2.addWeighted(image, 1 - alpha, overlay, alpha, 0)
-    return result
-
-
-def draw_mesh_solid(
-    image: np.ndarray,
-    vertices_2d: np.ndarray,
-    faces: np.ndarray,
-    depths: np.ndarray,
-    color: Tuple[int, int, int] = (100, 200, 100),
-    alpha: float = 0.6,
-) -> np.ndarray:
-    """
-    Draw solid mesh with depth-based shading.
-    
-    Args:
-        image: Background image [H, W, 3]
-        vertices_2d: 2D vertex positions [V, 2]
-        faces: Face indices [F, 3]
-        depths: Depth values per vertex [V]
-        color: Base color (B, G, R)
-        alpha: Overlay transparency
-    
-    Returns:
-        Image with solid mesh overlay
-    """
-    overlay = np.zeros_like(image)
-    H, W = image.shape[:2]
-    
-    # Sort faces by depth (back to front for painter's algorithm)
-    face_depths = depths[faces].mean(axis=1)
-    sorted_indices = np.argsort(-face_depths)  # Far to near
-    
-    for idx in sorted_indices:
-        face = faces[idx]
-        pts = vertices_2d[face].astype(np.int32)
-        
-        # Check bounds
-        if np.all((pts >= 0) & (pts[:, 0] < W) & (pts[:, 1] < H)):
-            # Depth-based shading
-            depth = face_depths[idx]
-            depth_norm = (depth - depths.min()) / (depths.max() - depths.min() + 1e-6)
-            shade = 0.5 + 0.5 * (1 - depth_norm)  # Closer = brighter
-            
-            face_color = tuple(int(c * shade) for c in color)
-            cv2.fillPoly(overlay, [pts], face_color)
-    
-    # Blend with original
-    mask = (overlay.sum(axis=2) > 0).astype(np.float32)
-    mask = mask[:, :, np.newaxis]
-    result = image * (1 - mask * alpha) + overlay * mask * alpha
-    return result.astype(np.uint8)
-
-
-def draw_skeleton(
-    image: np.ndarray,
-    joints_2d: np.ndarray,
-    skeleton_edges: List[Tuple[int, int]] = None,
-    joint_color: Tuple[int, int, int] = (0, 0, 255),
-    bone_color: Tuple[int, int, int] = (255, 0, 0),
-    joint_radius: int = 4,
-    bone_thickness: int = 2,
-) -> np.ndarray:
-    """
-    Draw skeleton joints and bones on image.
-    
-    Args:
-        image: Background image [H, W, 3]
-        joints_2d: 2D joint positions [J, 2]
-        skeleton_edges: List of (parent, child) joint indices
-        joint_color: Joint circle color
-        bone_color: Bone line color
-        joint_radius: Joint circle radius
-        bone_thickness: Bone line thickness
-    
-    Returns:
-        Image with skeleton overlay
-    """
-    result = image.copy()
-    H, W = image.shape[:2]
-    
-    # Default skeleton edges (SMPL-like)
-    if skeleton_edges is None:
-        skeleton_edges = [
-            (0, 1), (0, 2), (0, 3),  # Pelvis to legs and spine
-            (1, 4), (2, 5),  # Hips to knees
-            (4, 7), (5, 8),  # Knees to ankles
-            (3, 6), (6, 9),  # Spine
-            (9, 12), (9, 13), (9, 14),  # Spine to shoulders and head
-            (12, 15),  # Neck to head
-            (13, 16), (14, 17),  # Shoulders to elbows
-            (16, 18), (17, 19),  # Elbows to wrists
-            (18, 20), (19, 21),  # Wrists to hands
-        ]
-    
-    # Draw bones
-    for parent, child in skeleton_edges:
-        if parent < len(joints_2d) and child < len(joints_2d):
-            p1 = joints_2d[parent].astype(np.int32)
-            p2 = joints_2d[child].astype(np.int32)
-            
-            # Check bounds
-            if (0 <= p1[0] < W and 0 <= p1[1] < H and
-                0 <= p2[0] < W and 0 <= p2[1] < H):
-                cv2.line(result, tuple(p1), tuple(p2), bone_color, bone_thickness)
-    
-    # Draw joints
-    for joint in joints_2d:
-        pt = joint.astype(np.int32)
-        if 0 <= pt[0] < W and 0 <= pt[1] < H:
-            cv2.circle(result, tuple(pt), joint_radius, joint_color, -1)
-    
-    return result
-
-
-class SAM4DMeshOverlay:
-    """
-    Overlay 3D mesh on background images for visualization.
-    
-    Takes:
-    - Background images
-    - 3D mesh vertices (from SAM3DBody or similar)
-    - Camera intrinsics (from MoGe2 or manual)
-    
-    Outputs overlaid images for verification.
+    Input: SAM4D_MESH_SEQUENCE from SAM4DBodyBatchProcess or SAM4DTemporalSmoothing
+    Output: IMAGE with mesh rendered on top
     """
     
-    RENDER_MODES = ["wireframe", "solid", "skeleton", "wireframe+skeleton"]
+    RENDER_MODES = ["overlay", "mesh_only", "side_by_side"]
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "vertices": ("VERTICES",),  # [B, V, 3] or [V, 3]
+                "images": ("IMAGE", {
+                    "tooltip": "Original video frames"
+                }),
+                "mesh_sequence": ("SAM4D_MESH_SEQUENCE", {
+                    "tooltip": "Mesh sequence from SAM4DBodyBatchProcess or SAM4DTemporalSmoothing"
+                }),
             },
             "optional": {
-                "camera_intrinsics": ("CAMERA_INTRINSICS",),
-                "faces": ("FACES",),  # [F, 3]
-                "joints": ("JOINTS",),  # [B, J, 3] or [J, 3]
-                "render_mode": (cls.RENDER_MODES, {"default": "wireframe"}),
-                "color_r": ("INT", {"default": 0, "min": 0, "max": 255}),
-                "color_g": ("INT", {"default": 255, "min": 0, "max": 255}),
-                "color_b": ("INT", {"default": 0, "min": 0, "max": 255}),
-                "alpha": ("FLOAT", {"default": 0.5, "min": 0.1, "max": 1.0, "step": 0.1}),
-                "line_thickness": ("INT", {"default": 1, "min": 1, "max": 5}),
-                "camera_distance": ("FLOAT", {
-                    "default": 3.0,
-                    "min": 0.5,
-                    "max": 20.0,
-                    "tooltip": "Distance from camera to subject center (meters)"
+                "camera_intrinsics": ("CAMERA_INTRINSICS", {
+                    "tooltip": "Camera intrinsics from MoGe2 (uses sequence params if not provided)"
                 }),
+                "render_mode": (cls.RENDER_MODES, {"default": "overlay"}),
+                "mesh_color_r": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.1}),
+                "mesh_color_g": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.1}),
+                "mesh_color_b": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 1.0, "step": 0.1}),
             }
         }
     
     RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("overlaid_images",)
-    FUNCTION = "overlay"
+    RETURN_NAMES = ("rendered_images",)
+    FUNCTION = "render"
     CATEGORY = "SAM4DBodyCapture/Visualization"
     
-    def overlay(
+    def render(
         self,
         images: torch.Tensor,
-        vertices: torch.Tensor,
+        mesh_sequence: Dict,
         camera_intrinsics: Dict = None,
-        faces: torch.Tensor = None,
-        joints: torch.Tensor = None,
-        render_mode: str = "wireframe",
-        color_r: int = 0,
-        color_g: int = 255,
-        color_b: int = 0,
-        alpha: float = 0.5,
-        line_thickness: int = 1,
-        camera_distance: float = 3.0,
+        render_mode: str = "overlay",
+        mesh_color_r: float = 0.9,
+        mesh_color_g: float = 0.9,
+        mesh_color_b: float = 0.7,
     ) -> Tuple[torch.Tensor]:
-        """
-        Overlay 3D mesh on images.
-        """
-        B, H, W, C = images.shape
-        color = (color_b, color_g, color_r)  # OpenCV uses BGR
+        """Render mesh sequence overlay using SAM3DBody's Renderer."""
         
-        # Get camera parameters
+        B, H, W, C = images.shape
+        mesh_color = (mesh_color_r, mesh_color_g, mesh_color_b)
+        
+        # Extract mesh data from SAM4D_MESH_SEQUENCE format
+        vertices_list = mesh_sequence.get("vertices", [])
+        faces = mesh_sequence.get("faces", None)
+        params = mesh_sequence.get("params", {})
+        
+        if not vertices_list:
+            print("[MeshOverlay] No vertices in mesh sequence")
+            return (images,)
+        
+        if faces is None:
+            print("[MeshOverlay] No faces in mesh sequence")
+            return (images,)
+        
+        # Ensure faces is numpy array
+        if isinstance(faces, torch.Tensor):
+            faces = faces.cpu().numpy()
+        faces = np.asarray(faces)
+        
+        # Get camera translation and focal length from params
+        cam_t_list = params.get("camera_t", [])
+        focal_list = params.get("focal_length", [])
+        
+        # Get camera parameters from intrinsics or defaults
         if camera_intrinsics is not None:
-            focal_length = camera_intrinsics.get("focal_length", max(H, W))
+            default_focal = camera_intrinsics.get("focal_length", max(H, W))
             cx = camera_intrinsics.get("cx", W / 2.0)
             cy = camera_intrinsics.get("cy", H / 2.0)
+            per_frame_focal = camera_intrinsics.get("per_frame_focal", None)
+            print(f"[MeshOverlay] Using camera intrinsics: focal={default_focal:.1f}, cx={cx:.1f}, cy={cy:.1f}")
         else:
-            # Default camera (approximate)
-            focal_length = max(H, W)
+            default_focal = max(H, W)
             cx = W / 2.0
             cy = H / 2.0
+            per_frame_focal = None
+            print(f"[MeshOverlay] Using default camera: focal={default_focal:.1f}")
         
-        print(f"[Overlay] Focal: {focal_length:.1f}px, Principal: ({cx:.1f}, {cy:.1f})")
+        # Try to import SAM3DBody's Renderer
+        try:
+            from sam_3d_body.visualization.renderer import Renderer
+            USE_PYRENDER = True
+            print("[MeshOverlay] Using SAM3DBody pyrender Renderer")
+        except ImportError:
+            USE_PYRENDER = False
+            print("[MeshOverlay] SAM3DBody Renderer not available, using simple wireframe")
         
-        # Ensure vertices are per-frame
-        vertices_np = vertices.cpu().numpy()
-        if vertices_np.ndim == 2:
-            # Single mesh for all frames
-            vertices_np = np.tile(vertices_np[np.newaxis], (B, 1, 1))
-        
-        # Get faces
-        if faces is not None:
-            faces_np = faces.cpu().numpy().astype(np.int32)
-        else:
-            # Generate default faces if not provided (assumes SMPL-like topology)
-            faces_np = None
-        
-        # Get joints if provided
-        joints_np = None
-        if joints is not None:
-            joints_np = joints.cpu().numpy()
-            if joints_np.ndim == 2:
-                joints_np = np.tile(joints_np[np.newaxis], (B, 1, 1))
-        
-        # Process each frame
         result_frames = []
         
         for i in range(B):
-            # Get frame image
+            # Get frame image (convert to numpy uint8)
             img = images[i].cpu().numpy()
             if img.max() <= 1.0:
                 img = (img * 255).astype(np.uint8)
             else:
                 img = img.astype(np.uint8)
             
-            # Get frame vertices
-            verts = vertices_np[i] if i < len(vertices_np) else vertices_np[0]
-            
-            # Center and scale mesh
-            verts_centered = verts - verts.mean(axis=0, keepdims=True)
-            
-            # Position mesh at camera_distance in front of camera
-            translation = np.array([0, 0, camera_distance])
-            
-            # Project to 2D
-            verts_2d = project_3d_to_2d(
-                verts_centered,
-                focal_length=focal_length,
-                cx=cx,
-                cy=cy,
-                translation=translation,
-            )
-            
-            # Render based on mode
-            if render_mode == "wireframe" and faces_np is not None:
-                result = draw_mesh_wireframe(
-                    img, verts_2d, faces_np,
-                    color=color, thickness=line_thickness, alpha=alpha
-                )
-            elif render_mode == "solid" and faces_np is not None:
-                depths = verts_centered[:, 2]
-                result = draw_mesh_solid(
-                    img, verts_2d, faces_np, depths,
-                    color=color, alpha=alpha
-                )
-            elif render_mode == "skeleton" and joints_np is not None:
-                jnts = joints_np[i] if i < len(joints_np) else joints_np[0]
-                jnts_centered = jnts - jnts.mean(axis=0, keepdims=True)
-                jnts_2d = project_3d_to_2d(
-                    jnts_centered,
-                    focal_length=focal_length,
-                    cx=cx,
-                    cy=cy,
-                    translation=translation,
-                )
-                result = draw_skeleton(
-                    img, jnts_2d,
-                    joint_color=(color_b, color_g, color_r),
-                    bone_color=(color_r, color_g, color_b),
-                )
-            elif render_mode == "wireframe+skeleton":
-                result = img.copy()
-                if faces_np is not None:
-                    result = draw_mesh_wireframe(
-                        result, verts_2d, faces_np,
-                        color=color, thickness=line_thickness, alpha=alpha * 0.5
-                    )
-                if joints_np is not None:
-                    jnts = joints_np[i] if i < len(joints_np) else joints_np[0]
-                    jnts_centered = jnts - jnts.mean(axis=0, keepdims=True)
-                    jnts_2d = project_3d_to_2d(
-                        jnts_centered,
-                        focal_length=focal_length,
-                        cx=cx,
-                        cy=cy,
-                        translation=translation,
-                    )
-                    result = draw_skeleton(result, jnts_2d)
+            # Get vertices for this frame
+            if i < len(vertices_list) and vertices_list[i] is not None:
+                verts = vertices_list[i]
+                if isinstance(verts, torch.Tensor):
+                    verts = verts.cpu().numpy()
+                verts = np.asarray(verts)
+            elif len(vertices_list) > 0 and vertices_list[0] is not None:
+                verts = np.asarray(vertices_list[0])
             else:
-                # Just draw vertices as points
-                result = img.copy()
-                for pt in verts_2d:
-                    x, y = int(pt[0]), int(pt[1])
-                    if 0 <= x < W and 0 <= y < H:
-                        cv2.circle(result, (x, y), 2, color, -1)
+                result_frames.append(img)
+                continue
             
-            result_frames.append(result)
+            # Get camera translation for this frame
+            if i < len(cam_t_list) and cam_t_list[i] is not None:
+                cam_t = cam_t_list[i]
+                if isinstance(cam_t, torch.Tensor):
+                    cam_t = cam_t.cpu().numpy()
+                cam_t = np.asarray(cam_t).flatten()
+            else:
+                # Default camera translation
+                cam_t = np.array([0, 0, 2.5])
+            
+            # Get focal length for this frame
+            if per_frame_focal is not None and i < len(per_frame_focal):
+                focal = float(per_frame_focal[i])
+            elif i < len(focal_list) and focal_list[i] is not None:
+                focal = focal_list[i]
+                if isinstance(focal, (list, np.ndarray, torch.Tensor)):
+                    focal = float(np.asarray(focal).flatten()[0])
+                else:
+                    focal = float(focal)
+            else:
+                focal = default_focal
+            
+            if USE_PYRENDER:
+                try:
+                    renderer = Renderer(focal_length=focal, faces=faces)
+                    
+                    # SAM3DBody renderer expects camera_center
+                    camera_center = [cx, cy]
+                    
+                    if render_mode == "overlay":
+                        rendered = renderer(
+                            vertices=verts,
+                            cam_t=cam_t,
+                            image=img.astype(np.float32),
+                            mesh_base_color=mesh_color,
+                            camera_center=camera_center,
+                        )
+                        rendered = (rendered * 255).astype(np.uint8)
+                    elif render_mode == "mesh_only":
+                        rendered = renderer(
+                            vertices=verts,
+                            cam_t=cam_t,
+                            image=np.zeros_like(img, dtype=np.float32),
+                            mesh_base_color=mesh_color,
+                            scene_bg_color=(0, 0, 0),
+                            camera_center=camera_center,
+                        )
+                        rendered = (rendered * 255).astype(np.uint8)
+                    else:  # side_by_side
+                        overlay = renderer(
+                            vertices=verts,
+                            cam_t=cam_t,
+                            image=img.astype(np.float32),
+                            mesh_base_color=mesh_color,
+                            camera_center=camera_center,
+                        )
+                        overlay = (overlay * 255).astype(np.uint8)
+                        rendered = np.hstack([img, overlay])
+                    
+                    result_frames.append(rendered)
+                    
+                except Exception as e:
+                    print(f"[MeshOverlay] Renderer error frame {i}: {e}")
+                    # Fallback to simple wireframe
+                    result_frames.append(self._draw_wireframe(img, verts, faces, cam_t, focal, cx, cy, mesh_color))
+            else:
+                # Simple wireframe fallback
+                result_frames.append(self._draw_wireframe(img, verts, faces, cam_t, focal, cx, cy, mesh_color))
+            
+            if (i + 1) % 10 == 0:
+                print(f"[MeshOverlay] Rendered frame {i + 1}/{B}")
         
         # Stack results
         result_tensor = torch.from_numpy(np.stack(result_frames, axis=0)).float() / 255.0
         result_tensor = result_tensor.to(images.device)
         
-        print(f"[Overlay] Rendered {B} frames in '{render_mode}' mode")
+        print(f"[MeshOverlay] Rendered {len(result_frames)} frames in '{render_mode}' mode")
         
         return (result_tensor,)
+    
+    def _draw_wireframe(self, img, verts, faces, cam_t, focal, cx, cy, mesh_color):
+        """Simple wireframe rendering fallback."""
+        result = img.copy()
+        H, W = img.shape[:2]
+        
+        # Apply camera translation and flip for rendering coordinate system
+        verts_cam = verts.copy()
+        verts_cam[:, 0] = -verts_cam[:, 0]  # Flip X (matches SAM3DBody renderer)
+        verts_cam = verts_cam + cam_t
+        
+        # Perspective projection
+        z = verts_cam[:, 2:3]
+        z = np.maximum(z, 0.1)
+        
+        x_2d = focal * verts_cam[:, 0:1] / z + cx
+        y_2d = focal * verts_cam[:, 1:2] / z + cy
+        
+        pts_2d = np.concatenate([x_2d, y_2d], axis=1).astype(np.int32)
+        
+        # Draw wireframe edges
+        color_bgr = (int(mesh_color[2] * 255), int(mesh_color[1] * 255), int(mesh_color[0] * 255))
+        
+        for face in faces:
+            for j in range(3):
+                p1 = pts_2d[face[j]]
+                p2 = pts_2d[face[(j + 1) % 3]]
+                
+                # Check if both points are within bounds
+                if (0 <= p1[0] < W and 0 <= p1[1] < H and
+                    0 <= p2[0] < W and 0 <= p2[1] < H):
+                    cv2.line(result, tuple(p1), tuple(p2), color_bgr, 1, cv2.LINE_AA)
+        
+        return result
 
 
 class SAM4DDepthOverlay:
     """
     Overlay depth map on original images for visualization.
     
-    Useful for verifying depth estimation quality.
+    Note: With alpha=1.0 you see ONLY depth. Use alpha=0.5 to see both!
     """
     
     COLORMAPS = ["viridis", "plasma", "magma", "inferno", "jet", "gray"]
@@ -422,12 +259,22 @@ class SAM4DDepthOverlay:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
-                "depth_maps": ("IMAGE",),  # Depth as grayscale or RGB
+                "images": ("IMAGE", {
+                    "tooltip": "Original video frames"
+                }),
+                "depth_maps": ("IMAGE", {
+                    "tooltip": "Depth maps (grayscale or RGB)"
+                }),
             },
             "optional": {
                 "colormap": (cls.COLORMAPS, {"default": "viridis"}),
-                "alpha": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.1}),
+                "alpha": ("FLOAT", {
+                    "default": 0.5, 
+                    "min": 0.0, 
+                    "max": 1.0, 
+                    "step": 0.1,
+                    "tooltip": "Blend alpha: 0=original only, 1=depth only, 0.5=50/50 blend"
+                }),
             }
         }
     
@@ -446,7 +293,6 @@ class SAM4DDepthOverlay:
         """Overlay colored depth map on images."""
         B, H, W, C = images.shape
         
-        # Get colormap
         cmap_dict = {
             "viridis": cv2.COLORMAP_VIRIDIS,
             "plasma": cv2.COLORMAP_PLASMA,
@@ -457,21 +303,34 @@ class SAM4DDepthOverlay:
         }
         cmap = cmap_dict.get(colormap, cv2.COLORMAP_VIRIDIS)
         
+        print(f"[DepthOverlay] Blending {B} frames with alpha={alpha} ({colormap})")
+        
         result_frames = []
         
         for i in range(B):
-            # Get image
+            # Get original image
             img = images[i].cpu().numpy()
             if img.max() <= 1.0:
                 img = (img * 255).astype(np.uint8)
+            else:
+                img = img.astype(np.uint8)
             
-            # Get depth
-            depth = depth_maps[i].cpu().numpy()
+            # Get depth map
+            if i < len(depth_maps):
+                depth = depth_maps[i].cpu().numpy()
+            else:
+                depth = depth_maps[0].cpu().numpy()
+            
+            # Convert to single channel if needed
             if depth.ndim == 3:
-                depth = depth.mean(axis=2)  # Convert RGB to grayscale
+                depth = depth.mean(axis=2)
             
             # Normalize depth to 0-255
-            depth_norm = ((depth - depth.min()) / (depth.max() - depth.min() + 1e-8) * 255).astype(np.uint8)
+            depth_min, depth_max = depth.min(), depth.max()
+            if depth_max - depth_min > 1e-6:
+                depth_norm = ((depth - depth_min) / (depth_max - depth_min) * 255).astype(np.uint8)
+            else:
+                depth_norm = np.zeros_like(depth, dtype=np.uint8)
             
             # Apply colormap
             if cmap is not None:
@@ -479,8 +338,12 @@ class SAM4DDepthOverlay:
             else:
                 depth_color = cv2.cvtColor(depth_norm, cv2.COLOR_GRAY2BGR)
             
-            # Blend
-            result = cv2.addWeighted(img, 1 - alpha, depth_color, alpha, 0)
+            # Resize depth to match image if needed
+            if depth_color.shape[:2] != (H, W):
+                depth_color = cv2.resize(depth_color, (W, H))
+            
+            # Blend: result = (1-alpha)*original + alpha*depth
+            result = cv2.addWeighted(img, 1.0 - alpha, depth_color, alpha, 0)
             result_frames.append(result)
         
         result_tensor = torch.from_numpy(np.stack(result_frames, axis=0)).float() / 255.0
@@ -491,11 +354,11 @@ class SAM4DDepthOverlay:
 
 # Node mappings
 NODE_CLASS_MAPPINGS = {
-    "SAM4DMeshOverlay": SAM4DMeshOverlay,
+    "SAM4DMeshSequenceOverlay": SAM4DMeshSequenceOverlay,
     "SAM4DDepthOverlay": SAM4DDepthOverlay,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SAM4DMeshOverlay": "SAM4D Mesh Overlay",
-    "SAM4DDepthOverlay": "SAM4D Depth Overlay",
+    "SAM4DMeshSequenceOverlay": "👁️ Mesh Sequence Overlay",
+    "SAM4DDepthOverlay": "👁️ Depth Overlay Preview",
 }

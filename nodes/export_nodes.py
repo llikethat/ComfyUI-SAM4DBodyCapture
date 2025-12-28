@@ -636,18 +636,35 @@ class SAM4DExportCharacterFBX:
             elif focal_length:
                 frame_data["focal_length"] = focal_length
             
-            if seq.params and i < len(seq.params):
-                params = seq.params[i]
-                if isinstance(params, dict):
-                    if 'joint_coords' in params:
-                        jc = params['joint_coords']
-                        frame_data['joint_coords'] = jc.tolist() if hasattr(jc, 'tolist') else jc
-                    if 'joint_rotations' in params:
-                        jr = params['joint_rotations']
-                        frame_data['joint_rotations'] = jr.tolist() if hasattr(jr, 'tolist') else jr
-                    if 'pred_cam_t' in params:
-                        pct = params['pred_cam_t']
-                        frame_data['pred_cam_t'] = pct.tolist() if hasattr(pct, 'tolist') else pct
+            # Handle params - can be list of dicts OR dict of lists
+            if seq.params:
+                if isinstance(seq.params, dict) and "joint_coords" in seq.params:
+                    # New format: dict of lists {"joint_coords": [...], "joint_rotations": [...]}
+                    if "joint_coords" in seq.params and i < len(seq.params.get("joint_coords", [])):
+                        jc = seq.params["joint_coords"][i]
+                        if jc is not None:
+                            frame_data['joint_coords'] = jc.tolist() if hasattr(jc, 'tolist') else jc
+                    if "joint_rotations" in seq.params and i < len(seq.params.get("joint_rotations", [])):
+                        jr = seq.params["joint_rotations"][i]
+                        if jr is not None:
+                            frame_data['joint_rotations'] = jr.tolist() if hasattr(jr, 'tolist') else jr
+                    if "camera_t" in seq.params and i < len(seq.params.get("camera_t", [])):
+                        pct = seq.params["camera_t"][i]
+                        if pct is not None:
+                            frame_data['pred_cam_t'] = pct.tolist() if hasattr(pct, 'tolist') else pct
+                elif isinstance(seq.params, list) and i < len(seq.params):
+                    # Old format: list of dicts [{frame0_params}, {frame1_params}]
+                    params = seq.params[i]
+                    if isinstance(params, dict):
+                        if 'joint_coords' in params:
+                            jc = params['joint_coords']
+                            frame_data['joint_coords'] = jc.tolist() if hasattr(jc, 'tolist') else jc
+                        if 'joint_rotations' in params:
+                            jr = params['joint_rotations']
+                            frame_data['joint_rotations'] = jr.tolist() if hasattr(jr, 'tolist') else jr
+                        if 'pred_cam_t' in params:
+                            pct = params['pred_cam_t']
+                            frame_data['pred_cam_t'] = pct.tolist() if hasattr(pct, 'tolist') else pct
             frames_data.append(frame_data)
         
         export_data = {

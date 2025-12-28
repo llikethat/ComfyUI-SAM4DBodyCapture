@@ -162,12 +162,12 @@ try:
     from .nodes import mesh_overlay
     
     NODE_CLASS_MAPPINGS.update({
-        "SAM4D_MeshOverlay": mesh_overlay.SAM4DMeshOverlay,
+        "SAM4D_MeshSequenceOverlay": mesh_overlay.SAM4DMeshSequenceOverlay,
         "SAM4D_DepthOverlay": mesh_overlay.SAM4DDepthOverlay,
     })
     
     NODE_DISPLAY_NAME_MAPPINGS.update({
-        "SAM4D_MeshOverlay": "👁️ Mesh Overlay Preview",
+        "SAM4D_MeshSequenceOverlay": "👁️ Mesh Sequence Overlay",
         "SAM4D_DepthOverlay": "👁️ Depth Overlay Preview",
     })
     
