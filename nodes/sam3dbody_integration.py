@@ -326,7 +326,7 @@ class SAM4DBodyBatchProcess:
                 continue
             
             # Build camera intrinsics matrix for this frame
-            # SAM3DBody expects cam_int as a [3, 3] intrinsic matrix tensor
+            # SAM3DBody expects cam_int as a [1, 3, 3] intrinsic matrix tensor (with batch dim)
             cam_int_tensor = None
             if camera_intrinsics is not None:
                 # Get focal length for this frame
@@ -347,7 +347,8 @@ class SAM4DBodyBatchProcess:
                     [0, 0, 1]
                 ], dtype=np.float32)
                 
-                cam_int_tensor = torch.from_numpy(cam_int_matrix).to(device)
+                # Add batch dimension: [3, 3] -> [1, 3, 3]
+                cam_int_tensor = torch.from_numpy(cam_int_matrix).unsqueeze(0).to(device)
             else:
                 frame_focal = None
             
