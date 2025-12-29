@@ -63,6 +63,10 @@ Full Skeleton: 127-joint SMPL-H (v0.5.2)
 - Skeleton overlay now correctly aligns with subject (was using wrong SMPL indices)
 - Height estimation now uses correct joint chain (hip→knee→ankle)
 - Projection formula matches SAM3DBody's camera model (no Y negation)
+- **Removed skeleton connection lines** - Joints now shown as individual dots only
+  (Lines were skewed because joints have independent translational data)
+- **Removed automatic pyrender/trimesh installation** from `install.py` default
+  (Use `python install.py --render` for manual installation if needed)
 
 ---
 

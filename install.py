@@ -285,15 +285,16 @@ def main():
     elif args.render:
         install_rendering_deps()
     else:
-        # Full installation
+        # Full installation (core dependencies only)
         if install_requirements():
-            print()
-            install_rendering_deps()
             print()
             check_dependencies()
             print()
             print("💡 To download models, run: python install.py --models")
             print("   (Models are also auto-downloaded on first use)")
+            print()
+            print("💡 For mesh overlay rendering (optional), run: python install.py --render")
+            print("   (Requires manual setup - see README for instructions)")
     
     print()
     print("=" * 60)

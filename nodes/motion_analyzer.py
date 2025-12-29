@@ -331,7 +331,11 @@ def create_motion_debug_overlay(
     show_skeleton: bool = True,
 ) -> np.ndarray:
     """
-    Create debug visualization with motion vectors overlaid on video.
+    Create debug visualization with joint markers overlaid on video.
+    
+    Note: Skeleton lines are NOT drawn because joints have independent
+    translational data that doesn't match hierarchical bone structure.
+    Only individual joint dots are shown for accurate alignment.
     
     Uses pred_keypoints_2d directly for accurate positioning.
     """
@@ -348,20 +352,40 @@ def create_motion_debug_overlay(
     # Colors (BGR for OpenCV)
     COLOR_PELVIS = (0, 255, 0)       # Green
     COLOR_VELOCITY = (0, 255, 255)   # Yellow
-    COLOR_SKELETON = (255, 128, 0)   # Orange
     COLOR_JOINTS = (255, 128, 128)   # Light blue
+    COLOR_HEAD = (0, 255, 255)       # Yellow - for head
+    COLOR_HANDS = (255, 0, 255)      # Magenta - for wrists
+    COLOR_FEET = (255, 128, 0)       # Orange - for ankles
     COLOR_GROUNDED = (0, 255, 0)     # Green
     COLOR_AIRBORNE = (0, 0, 255)     # Red
     COLOR_PARTIAL = (0, 255, 255)    # Yellow
     COLOR_TEXT = (255, 255, 255)     # White
     
-    # Get skeleton connections based on mode
+    # Get joint indices based on mode
     if skeleton_mode == "simple":
-        skeleton_connections = SAM3DJoints.CONNECTIONS
         pelvis_idx = SAM3DJoints.PELVIS
+        head_idx = SAM3DJoints.HEAD
+        left_wrist_idx = SAM3DJoints.LEFT_WRIST
+        right_wrist_idx = SAM3DJoints.RIGHT_WRIST
+        left_ankle_idx = SAM3DJoints.LEFT_ANKLE
+        right_ankle_idx = SAM3DJoints.RIGHT_ANKLE
     else:
-        skeleton_connections = SMPLHJoints.CONNECTIONS
         pelvis_idx = SMPLHJoints.PELVIS
+        head_idx = SMPLHJoints.HEAD
+        left_wrist_idx = SMPLHJoints.LEFT_WRIST
+        right_wrist_idx = SMPLHJoints.RIGHT_WRIST
+        left_ankle_idx = SMPLHJoints.LEFT_ANKLE
+        right_ankle_idx = SMPLHJoints.RIGHT_ANKLE
+    
+    # Special joint indices for coloring
+    special_joints = {
+        pelvis_idx: (COLOR_PELVIS, 8),      # Green, large
+        head_idx: (COLOR_HEAD, 6),          # Yellow, medium
+        left_wrist_idx: (COLOR_HANDS, 5),   # Magenta
+        right_wrist_idx: (COLOR_HANDS, 5),  # Magenta
+        left_ankle_idx: (COLOR_FEET, 5),    # Orange
+        right_ankle_idx: (COLOR_FEET, 5),   # Orange
+    }
     
     for i in range(num_frames):
         frame = output[i]
@@ -371,31 +395,22 @@ def create_motion_debug_overlay(
         if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
             joints_2d_frame = np.array(joints_2d[i])
             
-            # Draw skeleton
-            if show_skeleton and len(joints_2d_frame) >= 18:
-                for j1, j2 in skeleton_connections:
-                    if j1 < len(joints_2d_frame) and j2 < len(joints_2d_frame):
-                        pt1 = joints_2d_frame[j1]
-                        pt2 = joints_2d_frame[j2]
-                        if pt1 is not None and pt2 is not None:
-                            cv2.line(frame, 
-                                    (int(pt1[0]), int(pt1[1])),
-                                    (int(pt2[0]), int(pt2[1])),
-                                    COLOR_SKELETON, 2, cv2.LINE_AA)
-            
-            # Draw joint dots
-            for j, pt in enumerate(joints_2d_frame):
-                if pt is not None:
-                    # Pelvis is green and larger
-                    if j == pelvis_idx:
-                        color = COLOR_PELVIS
-                        radius = 8
-                    else:
-                        color = COLOR_JOINTS
-                        radius = 4
-                    cv2.circle(frame, (int(pt[0]), int(pt[1])), radius, color, -1)
+            # Draw joint dots only (no skeleton lines)
+            # Lines are removed because joints have independent translational data
+            if show_skeleton:
+                for j, pt in enumerate(joints_2d_frame):
+                    if pt is not None:
+                        # Use special color/size for key joints
+                        if j in special_joints:
+                            color, radius = special_joints[j]
+                        else:
+                            color = COLOR_JOINTS
+                            radius = 4
+                        cv2.circle(frame, (int(pt[0]), int(pt[1])), radius, color, -1)
+                        # Add black outline for visibility
+                        cv2.circle(frame, (int(pt[0]), int(pt[1])), radius, (0, 0, 0), 1)
         
-        # Draw pelvis position with black outline
+        # Draw pelvis position with larger black outline
         pelvis_2d = subject_motion.get("pelvis_2d")
         if pelvis_2d is not None and i < len(pelvis_2d):
             px, py = pelvis_2d[i]
@@ -522,7 +537,7 @@ class SAM4DMotionAnalyzer:
                 }),
                 "show_skeleton": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Draw skeleton on debug overlay"
+                    "tooltip": "Draw joint markers on debug overlay (no lines, just dots)"
                 }),
                 "arrow_scale": ("FLOAT", {
                     "default": 10.0,
