@@ -479,9 +479,45 @@ class SAM4DBodyBatchProcess:
             mesh_sequence["params"]["global_rot"].append(output.get("global_rot", None))
             mesh_sequence["params"]["shape"].append(output.get("shape_params", None))
             mesh_sequence["params"]["scale"].append(output.get("scale_params", None))
+            
             # 18-joint keypoints for visualization/analysis
-            mesh_sequence["params"]["keypoints_2d"].append(output.get("pred_keypoints_2d", None))
-            mesh_sequence["params"]["keypoints_3d"].append(output.get("pred_keypoints_3d", None))
+            kp_2d = output.get("pred_keypoints_2d", None)
+            kp_3d = output.get("pred_keypoints_3d", None)
+            
+            # Debug: Print what we're getting on first frame
+            if frame_idx == 0 or (mesh_sequence["frame_count"] == 0):
+                print(f"\n[SAM4D] ===== KEYPOINT DEBUG (Frame {frame_idx}) =====")
+                print(f"[SAM4D] pred_keypoints_2d: {type(kp_2d).__name__}", end="")
+                if kp_2d is not None:
+                    if hasattr(kp_2d, 'shape'):
+                        print(f" shape={kp_2d.shape}")
+                    else:
+                        print(f" len={len(kp_2d) if hasattr(kp_2d, '__len__') else 'N/A'}")
+                else:
+                    print(" (None)")
+                
+                print(f"[SAM4D] pred_keypoints_3d: {type(kp_3d).__name__}", end="")
+                if kp_3d is not None:
+                    if hasattr(kp_3d, 'shape'):
+                        print(f" shape={kp_3d.shape}")
+                    else:
+                        print(f" len={len(kp_3d) if hasattr(kp_3d, '__len__') else 'N/A'}")
+                else:
+                    print(" (None)")
+                
+                jc = output.get("pred_joint_coords", None)
+                print(f"[SAM4D] pred_joint_coords: {type(jc).__name__}", end="")
+                if jc is not None:
+                    if hasattr(jc, 'shape'):
+                        print(f" shape={jc.shape}")
+                    else:
+                        print(f" len={len(jc) if hasattr(jc, '__len__') else 'N/A'}")
+                else:
+                    print(" (None)")
+                print(f"[SAM4D] ===========================================\n")
+            
+            mesh_sequence["params"]["keypoints_2d"].append(kp_2d)
+            mesh_sequence["params"]["keypoints_3d"].append(kp_3d)
             
             mesh_sequence["frame_count"] += 1
             

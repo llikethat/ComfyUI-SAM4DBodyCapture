@@ -601,6 +601,28 @@ class SAM4DMotionAnalyzer:
         
         print(f"[Motion Analyzer] Data available: keypoints_2d={has_kp_2d}, keypoints_3d={has_kp_3d}, joint_coords={has_joint_coords}")
         
+        # Debug: Print more details about available data
+        print(f"[Motion Analyzer] ===== KEYPOINT DATA DEBUG =====")
+        print(f"[Motion Analyzer] keypoints_2d_list length: {len(keypoints_2d_list)}")
+        if len(keypoints_2d_list) > 0 and keypoints_2d_list[0] is not None:
+            kp2d_sample = to_numpy(keypoints_2d_list[0])
+            print(f"[Motion Analyzer] keypoints_2d[0] shape: {kp2d_sample.shape if hasattr(kp2d_sample, 'shape') else 'no shape'}")
+            if kp2d_sample is not None and len(kp2d_sample) > 0:
+                print(f"[Motion Analyzer] keypoints_2d[0] first 3 points: {kp2d_sample[:3] if len(kp2d_sample) >= 3 else kp2d_sample}")
+        else:
+            print(f"[Motion Analyzer] keypoints_2d[0] is None or empty")
+        
+        print(f"[Motion Analyzer] keypoints_3d_list length: {len(keypoints_3d_list)}")
+        if len(keypoints_3d_list) > 0 and keypoints_3d_list[0] is not None:
+            kp3d_sample = to_numpy(keypoints_3d_list[0])
+            print(f"[Motion Analyzer] keypoints_3d[0] shape: {kp3d_sample.shape if hasattr(kp3d_sample, 'shape') else 'no shape'}")
+        
+        print(f"[Motion Analyzer] joint_coords_list length: {len(joint_coords_list)}")
+        if len(joint_coords_list) > 0 and joint_coords_list[0] is not None:
+            jc_sample = to_numpy(joint_coords_list[0])
+            print(f"[Motion Analyzer] joint_coords[0] shape: {jc_sample.shape if hasattr(jc_sample, 'shape') else 'no shape'}")
+        print(f"[Motion Analyzer] =================================")
+        
         # Decide which 3D keypoints to use
         if use_simple and has_kp_3d:
             kp_source = "keypoints_3d"
@@ -748,11 +770,17 @@ class SAM4DMotionAnalyzer:
                     joints_2d = keypoints_2d[:, :2]
                 else:
                     joints_2d = keypoints_2d
+                if i == 0:
+                    print(f"[Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
+                    print(f"[Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
             else:
                 # Project 3D to 2D
                 joints_2d = project_points_to_2d(
                     keypoints_3d, focal, camera_t, image_size[0], image_size[1]
                 )
+                if i == 0:
+                    print(f"[Motion Analyzer] Frame 0: PROJECTING 3D→2D (focal={focal}, cam_t={camera_t})")
+                    print(f"[Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}")
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
