@@ -650,12 +650,59 @@ class SAM4DExportCharacterFBX:
         focal_length = None
         image_width = 1920
         image_height = 1080
+        cx = None
+        cy = None
         
         if camera_intrinsics:
             focal_length = camera_intrinsics.get("focal_length")
             image_width = camera_intrinsics.get("width", 1920)
             image_height = camera_intrinsics.get("height", 1080)
+            cx = camera_intrinsics.get("cx", image_width / 2.0)
+            cy = camera_intrinsics.get("cy", image_height / 2.0)
             print(f"[SAM4D Export] Using camera intrinsics: focal={focal_length:.1f}px, size={image_width}x{image_height}")
+        else:
+            cx = image_width / 2.0
+            cy = image_height / 2.0
+        
+        # Calculate film offsets using the specified sensor_width
+        # Film offset is the displacement of principal point from image center in mm/inches
+        aspect_ratio = image_height / image_width
+        sensor_height = sensor_width * aspect_ratio
+        
+        # Video center in pixels
+        center_x = image_width / 2.0
+        center_y = image_height / 2.0
+        
+        # Offset from center in pixels
+        offset_x_px = cx - center_x
+        offset_y_px = cy - center_y
+        
+        # Convert to mm
+        film_offset_x_mm = (offset_x_px / image_width) * sensor_width
+        film_offset_y_mm = (offset_y_px / image_height) * sensor_height
+        
+        # Convert to inches (Maya uses inches)
+        mm_to_inch = 0.0393701
+        film_offset_x_inch = film_offset_x_mm * mm_to_inch
+        film_offset_y_inch = film_offset_y_mm * mm_to_inch
+        
+        # Calculate focal length in mm
+        focal_mm = None
+        if focal_length:
+            focal_mm = focal_length * sensor_width / image_width
+        
+        # Enhanced debug output
+        print(f"\n[SAM4D Export] ========== CAMERA DEBUG INFO ==========")
+        print(f"[SAM4D Export] Video Resolution: {image_width} x {image_height}")
+        print(f"[SAM4D Export] Video Center: ({center_x:.1f}, {center_y:.1f})")
+        print(f"[SAM4D Export] Principal Point (cx, cy): ({cx:.1f}, {cy:.1f})")
+        print(f"[SAM4D Export] Offset from Center: ({offset_x_px:.1f}, {offset_y_px:.1f}) px")
+        print(f"[SAM4D Export] Sensor Size: {sensor_width:.1f} x {sensor_height:.1f} mm")
+        print(f"[SAM4D Export] Film Offset X: {film_offset_x_mm:.4f} mm ({film_offset_x_inch:.5f} in)")
+        print(f"[SAM4D Export] Film Offset Y: {film_offset_y_mm:.4f} mm ({film_offset_y_inch:.5f} in)")
+        if focal_mm:
+            print(f"[SAM4D Export] Focal Length: {focal_length:.1f} px = {focal_mm:.2f} mm (@ {sensor_width}mm sensor)")
+        print(f"[SAM4D Export] =============================================\n")
         
         frames_data = []
         for i, vertices in enumerate(seq.vertices):
@@ -728,6 +775,18 @@ class SAM4DExportCharacterFBX:
             "world_translation_mode": "root",  # Character at origin
             "skeleton_mode": "positions",
             "sensor_width": sensor_width,
+            # Camera intrinsics for Maya/Blender
+            "image_width": image_width,
+            "image_height": image_height,
+            "focal_length_px": focal_length,
+            "focal_length_mm": focal_mm,
+            "cx": cx,
+            "cy": cy,
+            "film_offset_x_mm": film_offset_x_mm,
+            "film_offset_y_mm": film_offset_y_mm,
+            "film_offset_x_inch": film_offset_x_inch,
+            "film_offset_y_inch": film_offset_y_inch,
+            "sensor_height": sensor_height,
         }
         
         # Write temp JSON

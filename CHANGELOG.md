@@ -8,8 +8,123 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned for v0.5.0
-- Body joint tracking using SAM-Body4D exact method
-- Improved mesh quality
+- Camera solver for nodal pan/tilt compensation
+- Body translation from camera rotation
+
+---
+
+## [0.4.2] - 2025-12-29
+
+### Added - Camera Debug & Installation Improvements
+
+#### Enhanced Camera Debug Logging
+Comprehensive camera intrinsics debug output in Export FBX node:
+
+```
+[SAM4D Export] ========== CAMERA DEBUG INFO ==========
+[SAM4D Export] Video Resolution: 1920 x 1080
+[SAM4D Export] Video Center: (960.0, 540.0)
+[SAM4D Export] Principal Point (cx, cy): (960.0, 540.0)
+[SAM4D Export] Offset from Center: (0.0, 0.0) px
+[SAM4D Export] Sensor Size: 36.0 x 20.3 mm
+[SAM4D Export] Film Offset X: 0.0000 mm (0.00000 in)
+[SAM4D Export] Film Offset Y: 0.0000 mm (0.00000 in)
+[SAM4D Export] Focal Length: 1234.5 px = 35.00 mm (@ 36mm sensor)
+[SAM4D Export] =============================================
+```
+
+**Film offset calculation for Maya:**
+```
+Film Offset X (mm) = (cx - width/2) / width × sensor_width
+Film Offset Y (mm) = (cy - height/2) / height × sensor_height
+Film Offset (in) = Film Offset (mm) × 0.0393701
+```
+
+#### BFloat16 Cache Fix
+Fixed issue where toggling `force_fp16` was required after ComfyUI restart:
+
+- **Problem:** Cached model with wrong dtype (bfloat16) was returned even with `force_fp16=True`
+- **Solution:** Added automatic dtype detection and cache clearing
+
+**New behavior:**
+1. Tracks `force_fp16` setting changes per model path
+2. Verifies cached model has correct dtype before returning
+3. Auto-reloads if cached model has bfloat16 but force_fp16=True
+4. Logs actual model dtype: `[SAM4DBodyCapture] Model dtype: float16`
+
+```python
+# New cache verification
+if force_fp16:
+    model_dtype = _check_model_dtype(cached_model)
+    if model_dtype == "bfloat16":
+        print("Cached model has wrong dtype, reloading...")
+        _clear_model_cache(model_path)
+```
+
+#### Automated Rendering Installation
+New `--render` option in install.py for mesh overlay dependencies:
+
+```bash
+# Full installation (includes rendering)
+python install.py
+
+# Rendering dependencies only
+python install.py --render
+
+# Check installation status
+python install.py --check
+```
+
+**Installs Python packages:**
+- `pyrender>=0.1.45`
+- `trimesh>=3.10.0`
+- `PyOpenGL>=3.1.0`
+
+**Configures headless rendering:**
+- Installs system libraries via apt: `libosmesa6-dev`, `freeglut3-dev`, `libgl1-mesa-glx`
+- Auto-detects EGL or OSMesa availability
+- Sets `PYOPENGL_PLATFORM=egl` (or osmesa)
+- Adds environment variable to `~/.bashrc` for persistence
+- Verifies pyrender installation and Scene creation
+
+**Example output:**
+```
+📦 Installing rendering dependencies (pyrender, trimesh, PyOpenGL)...
+  ✅ pyrender>=0.1.45
+  ✅ trimesh>=3.10.0
+  ✅ PyOpenGL>=3.1.0
+
+📦 Setting up headless rendering...
+  ✅ libosmesa6-dev
+  ✅ freeglut3-dev
+
+📦 Configuring PyOpenGL for headless rendering...
+  ✅ EGL available - recommended for headless rendering
+  ✅ Added to ~/.bashrc
+
+🔍 Verifying pyrender installation...
+  ✅ pyrender 0.1.45
+  ✅ trimesh 4.0.0
+  ✅ pyrender Scene creation works
+
+✅ Rendering dependencies installed!
+```
+
+### Changed
+- `CameraIntrinsicsInfo` node displays film offset and sensor info
+- Export node logs comprehensive camera debug info including video center
+- Camera intrinsics dict includes all film-related data
+- `--check` now shows rendering dependencies status and PYOPENGL_PLATFORM
+
+### Technical Details
+
+**Film Offset in Maya:**
+Film offset represents the displacement of the optical center (principal point) from the image center. In Maya, this is set in the camera's `filmOffsetX` and `filmOffsetY` attributes in inches.
+
+**Conversion:**
+1. Get offset from center in pixels: `offset_px = cx - (width/2)`
+2. Convert to mm: `offset_mm = (offset_px / width) * sensor_width`
+3. Convert to inches: `offset_inch = offset_mm * 0.0393701`
 
 ---
 

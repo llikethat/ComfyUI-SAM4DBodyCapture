@@ -20,6 +20,42 @@ import folder_paths
 
 # Global cache for model
 _MODEL_CACHE = {}
+_LAST_FP16_SETTING = {}  # Track last force_fp16 setting per model path
+
+
+def _check_model_dtype(model) -> str:
+    """Check if model is using bfloat16 or float16."""
+    try:
+        # Check the model's parameters for dtype
+        for param in model.model.parameters():
+            if param.dtype == torch.bfloat16:
+                return "bfloat16"
+            elif param.dtype == torch.float16:
+                return "float16"
+            elif param.dtype == torch.float32:
+                return "float32"
+            break  # Just check first parameter
+    except:
+        pass
+    return "unknown"
+
+
+def _clear_model_cache(model_path: str = None):
+    """Clear model cache to force reload."""
+    global _MODEL_CACHE, _LAST_FP16_SETTING
+    if model_path:
+        # Clear specific model
+        keys_to_remove = [k for k in _MODEL_CACHE if model_path in k]
+        for k in keys_to_remove:
+            del _MODEL_CACHE[k]
+            print(f"[SAM4DBodyCapture] Cleared cached model: {k}")
+        if model_path in _LAST_FP16_SETTING:
+            del _LAST_FP16_SETTING[model_path]
+    else:
+        # Clear all
+        _MODEL_CACHE.clear()
+        _LAST_FP16_SETTING.clear()
+        print("[SAM4DBodyCapture] Cleared all model cache")
 
 
 class SAM4DBodyLoader:
@@ -62,11 +98,32 @@ class SAM4DBodyLoader:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model_path = os.path.abspath(model_path)
         
+        # Check if force_fp16 setting changed - if so, clear cache for this model
+        if model_path in _LAST_FP16_SETTING:
+            if _LAST_FP16_SETTING[model_path] != force_fp16:
+                print(f"[SAM4DBodyCapture] force_fp16 changed ({_LAST_FP16_SETTING[model_path]} → {force_fp16}), clearing cache...")
+                _clear_model_cache(model_path)
+        
         # Check cache
         cache_key = f"{model_path}_{device}_{force_fp16}"
         if cache_key in _MODEL_CACHE:
-            print(f"[SAM4DBodyCapture] Using cached SAM3DBody model")
-            return (_MODEL_CACHE[cache_key],)
+            cached_model = _MODEL_CACHE[cache_key]
+            
+            # Verify cached model has correct dtype
+            if force_fp16:
+                model_dtype = _check_model_dtype(cached_model)
+                if model_dtype == "bfloat16":
+                    print(f"[SAM4DBodyCapture] Cached model has wrong dtype ({model_dtype}), reloading...")
+                    _clear_model_cache(model_path)
+                else:
+                    print(f"[SAM4DBodyCapture] Using cached SAM3DBody model (dtype: {model_dtype})")
+                    return (cached_model,)
+            else:
+                print(f"[SAM4DBodyCapture] Using cached SAM3DBody model")
+                return (cached_model,)
+        
+        # Track the setting for this model path
+        _LAST_FP16_SETTING[model_path] = force_fp16
         
         # Check model files
         ckpt_path = os.path.join(model_path, "model.ckpt")
@@ -168,6 +225,13 @@ class SAM4DBodyLoader:
             "mhr_path": mhr_path,
             "faces": model.head_pose.faces.cpu().numpy(),
         }
+        
+        # Verify dtype after loading
+        final_dtype = _check_model_dtype(model_dict)
+        if force_fp16 and final_dtype == "bfloat16":
+            print(f"[SAM4DBodyCapture] WARNING: Model still using bfloat16! Try restarting ComfyUI.")
+        else:
+            print(f"[SAM4DBodyCapture] Model dtype: {final_dtype}")
         
         # Cache it
         _MODEL_CACHE[cache_key] = model_dict

@@ -66,6 +66,64 @@ def focal_length_to_fov(focal_px: float, image_width: int) -> float:
     return fov_degrees
 
 
+def calculate_film_offsets(cx: float, cy: float, width: int, height: int, sensor_width_mm: float = 36.0) -> dict:
+    """
+    Calculate film offset X and Y in millimeters.
+    
+    Film offset is the displacement of the principal point (cx, cy) from the
+    image center, expressed in film/sensor units (mm).
+    
+    In Maya:
+    - Film Offset X: horizontal displacement in inches (we return mm, convert in Maya)
+    - Film Offset Y: vertical displacement in inches
+    
+    Args:
+        cx: Principal point X in pixels
+        cy: Principal point Y in pixels  
+        width: Image width in pixels
+        height: Image height in pixels
+        sensor_width_mm: Sensor/film width in mm (default 36mm for full-frame)
+    
+    Returns:
+        dict with film_offset_x, film_offset_y in mm and inches
+    """
+    # Calculate sensor height based on aspect ratio
+    aspect_ratio = height / width
+    sensor_height_mm = sensor_width_mm * aspect_ratio
+    
+    # Calculate offset from center in pixels
+    offset_x_px = cx - (width / 2.0)
+    offset_y_px = cy - (height / 2.0)
+    
+    # Convert to mm (proportional to sensor size)
+    # offset_mm = offset_px / image_size * sensor_size
+    film_offset_x_mm = (offset_x_px / width) * sensor_width_mm
+    film_offset_y_mm = (offset_y_px / height) * sensor_height_mm
+    
+    # Convert to inches (Maya uses inches for film offset)
+    mm_to_inch = 0.0393701
+    film_offset_x_inch = film_offset_x_mm * mm_to_inch
+    film_offset_y_inch = film_offset_y_mm * mm_to_inch
+    
+    return {
+        "film_offset_x_mm": film_offset_x_mm,
+        "film_offset_y_mm": film_offset_y_mm,
+        "film_offset_x_inch": film_offset_x_inch,
+        "film_offset_y_inch": film_offset_y_inch,
+        "sensor_width_mm": sensor_width_mm,
+        "sensor_height_mm": sensor_height_mm,
+    }
+
+
+def focal_px_to_focal_mm(focal_px: float, image_width: int, sensor_width_mm: float = 36.0) -> float:
+    """
+    Convert focal length from pixels to millimeters.
+    
+    Formula: focal_mm = focal_px * sensor_width_mm / image_width
+    """
+    return focal_px * sensor_width_mm / image_width
+
+
 class MoGe2CameraIntrinsics:
     """
     Extract camera intrinsics (focal length, FOV) from images using MoGe2.
@@ -170,16 +228,33 @@ class MoGe2CameraIntrinsics:
         default_fov = 60.0 if known_fov <= 0 else known_fov
         default_focal = fov_to_focal_length(default_fov, W)
         
+        # Principal point at center
+        cx = W / 2.0
+        cy = H / 2.0
+        
+        # Default sensor width 36mm (full-frame)
+        default_sensor_width = 36.0
+        film_offsets = calculate_film_offsets(cx, cy, W, H, default_sensor_width)
+        focal_mm = focal_px_to_focal_mm(default_focal, W, default_sensor_width)
+        
         intrinsics = {
             "focal_length": default_focal,
+            "focal_length_mm": focal_mm,
             "fov_x": default_fov,
             "fov_y": focal_length_to_fov(default_focal, H),
-            "cx": W / 2.0,
-            "cy": H / 2.0,
+            "cx": cx,
+            "cy": cy,
             "width": W,
             "height": H,
             "per_frame_focal": [default_focal] * B,
             "per_frame_fov": [default_fov] * B,
+            # Film offset data (for Maya/DCC)
+            "film_offset_x_mm": film_offsets["film_offset_x_mm"],
+            "film_offset_y_mm": film_offsets["film_offset_y_mm"],
+            "film_offset_x_inch": film_offsets["film_offset_x_inch"],
+            "film_offset_y_inch": film_offsets["film_offset_y_inch"],
+            "sensor_width_mm": film_offsets["sensor_width_mm"],
+            "sensor_height_mm": film_offsets["sensor_height_mm"],
         }
         
         # Default depth maps (gradient fallback for visualization)
@@ -190,12 +265,16 @@ class MoGe2CameraIntrinsics:
         
         # If known FOV is provided, use it directly
         if known_fov > 0:
-            print(f"[MoGe2] Using provided FOV: {known_fov:.1f}° → Focal: {default_focal:.1f}px")
+            print(f"[MoGe2] Using provided FOV: {known_fov:.1f}° → Focal: {default_focal:.1f}px ({focal_mm:.1f}mm)")
+            print(f"[MoGe2] Principal Point: cx={cx:.1f}, cy={cy:.1f}")
+            print(f"[MoGe2] Film Offset: X={film_offsets['film_offset_x_mm']:.3f}mm, Y={film_offsets['film_offset_y_mm']:.3f}mm")
             return (intrinsics, depth_maps, float(default_focal))
         
         # Try to load MoGe2
         if not self.load_model(model_name, use_fp16):
             print("[MoGe2] Using fallback intrinsics (default FOV=60°)")
+            print(f"[MoGe2] Principal Point: cx={cx:.1f}, cy={cy:.1f}")
+            print(f"[MoGe2] Film Offset: X={film_offsets['film_offset_x_mm']:.3f}mm, Y={film_offsets['film_offset_y_mm']:.3f}mm")
             return (intrinsics, depth_maps, float(default_focal))
         
         # Process with MoGe2
@@ -269,24 +348,46 @@ class MoGe2CameraIntrinsics:
             avg_focal = np.mean(per_frame_focal)
             avg_fov = np.mean(per_frame_fov)
             
+            # Principal point (cx, cy) - default to image center
+            # MoGe2 currently doesn't provide off-center principal point
+            cx = W / 2.0
+            cy = H / 2.0
+            
+            # Calculate film offsets (for Maya camera)
+            # Default sensor width 36mm (full-frame), can be overridden in export
+            default_sensor_width = 36.0
+            film_offsets = calculate_film_offsets(cx, cy, W, H, default_sensor_width)
+            focal_mm = focal_px_to_focal_mm(avg_focal, W, default_sensor_width)
+            
             # Update intrinsics
             intrinsics = {
                 "focal_length": float(avg_focal),
+                "focal_length_mm": float(focal_mm),
                 "fov_x": float(avg_fov),
                 "fov_y": float(focal_length_to_fov(avg_focal, H)),
-                "cx": W / 2.0,
-                "cy": H / 2.0,
+                "cx": cx,
+                "cy": cy,
                 "width": W,
                 "height": H,
                 "per_frame_focal": per_frame_focal,
                 "per_frame_fov": per_frame_fov,
+                # Film offset data (for Maya/DCC)
+                "film_offset_x_mm": film_offsets["film_offset_x_mm"],
+                "film_offset_y_mm": film_offsets["film_offset_y_mm"],
+                "film_offset_x_inch": film_offsets["film_offset_x_inch"],
+                "film_offset_y_inch": film_offsets["film_offset_y_inch"],
+                "sensor_width_mm": film_offsets["sensor_width_mm"],
+                "sensor_height_mm": film_offsets["sensor_height_mm"],
             }
             
             # Stack depth maps
             depth_maps = torch.from_numpy(np.stack(all_depths, axis=0)).float()
             depth_maps = depth_maps.to(images.device)
             
-            print(f"[MoGe2] Average: FOV={avg_fov:.1f}°, Focal={avg_focal:.1f}px")
+            # Debug logging
+            print(f"[MoGe2] Average: FOV={avg_fov:.1f}°, Focal={avg_focal:.1f}px ({focal_mm:.1f}mm @ {default_sensor_width}mm sensor)")
+            print(f"[MoGe2] Principal Point: cx={cx:.1f}, cy={cy:.1f}")
+            print(f"[MoGe2] Film Offset: X={film_offsets['film_offset_x_mm']:.3f}mm ({film_offsets['film_offset_x_inch']:.4f}in), Y={film_offsets['film_offset_y_mm']:.3f}mm ({film_offsets['film_offset_y_inch']:.4f}in)")
             
             return (intrinsics, depth_maps, float(avg_focal))
             
@@ -340,19 +441,38 @@ class CameraIntrinsicsFromFOV:
         focal_length = (W / 2.0) / np.tan(np.radians(fov_horizontal) / 2.0)
         fov_vertical = 2 * np.degrees(np.arctan((H / 2.0) / focal_length))
         
+        # Principal point at center
+        cx = W / 2.0
+        cy = H / 2.0
+        
+        # Default sensor width 36mm (full-frame)
+        default_sensor_width = 36.0
+        film_offsets = calculate_film_offsets(cx, cy, W, H, default_sensor_width)
+        focal_mm = focal_px_to_focal_mm(focal_length, W, default_sensor_width)
+        
         intrinsics = {
             "focal_length": float(focal_length),
+            "focal_length_mm": float(focal_mm),
             "fov_x": float(fov_horizontal),
             "fov_y": float(fov_vertical),
-            "cx": W / 2.0,
-            "cy": H / 2.0,
+            "cx": cx,
+            "cy": cy,
             "width": W,
             "height": H,
             "per_frame_focal": [focal_length] * B,
             "per_frame_fov": [fov_horizontal] * B,
+            # Film offset data (for Maya/DCC)
+            "film_offset_x_mm": film_offsets["film_offset_x_mm"],
+            "film_offset_y_mm": film_offsets["film_offset_y_mm"],
+            "film_offset_x_inch": film_offsets["film_offset_x_inch"],
+            "film_offset_y_inch": film_offsets["film_offset_y_inch"],
+            "sensor_width_mm": film_offsets["sensor_width_mm"],
+            "sensor_height_mm": film_offsets["sensor_height_mm"],
         }
         
-        print(f"[Camera] FOV: {fov_horizontal:.1f}° → Focal: {focal_length:.1f}px")
+        print(f"[Camera] FOV: {fov_horizontal:.1f}° → Focal: {focal_length:.1f}px ({focal_mm:.1f}mm)")
+        print(f"[Camera] Principal Point: cx={cx:.1f}, cy={cy:.1f}")
+        print(f"[Camera] Film Offset: X={film_offsets['film_offset_x_mm']:.3f}mm, Y={film_offsets['film_offset_y_mm']:.3f}mm")
         
         return (intrinsics, float(focal_length))
 
@@ -380,10 +500,26 @@ class CameraIntrinsicsInfo:
             "=== Camera Intrinsics ===",
             f"Image Size: {camera_intrinsics.get('width', 'N/A')} x {camera_intrinsics.get('height', 'N/A')}",
             f"Focal Length: {camera_intrinsics.get('focal_length', 'N/A'):.2f} px",
+        ]
+        
+        # Add focal in mm if available
+        if 'focal_length_mm' in camera_intrinsics:
+            info_lines.append(f"Focal Length: {camera_intrinsics['focal_length_mm']:.2f} mm")
+        
+        info_lines.extend([
             f"FOV Horizontal: {camera_intrinsics.get('fov_x', 'N/A'):.2f}°",
             f"FOV Vertical: {camera_intrinsics.get('fov_y', 'N/A'):.2f}°",
-            f"Principal Point: ({camera_intrinsics.get('cx', 'N/A'):.1f}, {camera_intrinsics.get('cy', 'N/A'):.1f})",
-        ]
+            f"Principal Point: cx={camera_intrinsics.get('cx', 'N/A'):.1f}, cy={camera_intrinsics.get('cy', 'N/A'):.1f}",
+        ])
+        
+        # Film offset info if available
+        if 'film_offset_x_mm' in camera_intrinsics:
+            info_lines.append("--- Film Offset (for Maya) ---")
+            info_lines.append(f"Film Offset X: {camera_intrinsics['film_offset_x_mm']:.3f} mm ({camera_intrinsics.get('film_offset_x_inch', 0):.4f} in)")
+            info_lines.append(f"Film Offset Y: {camera_intrinsics['film_offset_y_mm']:.3f} mm ({camera_intrinsics.get('film_offset_y_inch', 0):.4f} in)")
+        
+        if 'sensor_width_mm' in camera_intrinsics:
+            info_lines.append(f"Sensor: {camera_intrinsics['sensor_width_mm']:.1f} x {camera_intrinsics.get('sensor_height_mm', 0):.1f} mm")
         
         # Per-frame info if available
         per_frame_focal = camera_intrinsics.get('per_frame_focal', [])

@@ -4,10 +4,16 @@
 
 A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body capture with occlusion handling, temporal smoothing, and mesh export.
 
-[![Version](https://img.shields.io/badge/version-0.4.1-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
+[![Version](https://img.shields.io/badge/version-0.4.2-blue.svg)](https://github.com/llikethat/ComfyUI-SAM4DBodyCapture/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## 🎯 Features
+
+### v0.4.2 - Camera Intrinsics & Film Offset
+- 📷 **Film Offset Calculation** - cx/cy → Film Offset X/Y for Maya cameras
+- 🔧 **BFloat16 Cache Fix** - Auto-detects and reloads model if wrong dtype cached
+- 📦 **Automated Rendering Install** - `python install.py --render` for pyrender/headless
+- 📝 **Enhanced Debug Logging** - Prints cx, cy, focal_mm, film offsets
 
 ### v0.4.1 - SAM3DBody Integration (BFloat16 Fix!)
 - 🧍 **SAM3DBody Integration** - Full SAM-Body4D pipeline in ComfyUI
@@ -83,12 +89,29 @@ A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body
 cd ComfyUI/custom_nodes
 git clone https://github.com/llikethat/ComfyUI-SAM4DBodyCapture.git
 cd ComfyUI-SAM4DBodyCapture
+
+# Full installation (includes rendering deps)
+python install.py
+
+# Or install step by step:
 pip install -r requirements.txt
+python install.py --render  # For mesh overlay (pyrender, headless rendering)
+python install.py --check   # Verify installation
 ```
 
 ### Dependencies
 - **ComfyUI-SAM3DBody** - Required for mesh generation
 - **MoGe2** (optional) - For camera intrinsics: `pip install git+https://github.com/microsoft/MoGe.git`
+- **Blender** (optional) - Required for FBX/Alembic export
+
+### Rendering Dependencies (for Mesh Overlay)
+The installer automatically sets up headless rendering:
+```bash
+python install.py --render
+# Installs: pyrender, trimesh, PyOpenGL
+# Configures: PYOPENGL_PLATFORM=egl (or osmesa)
+# System libs: libosmesa6-dev, freeglut3-dev (if apt available)
+```
 
 ### Model Downloads (Automatic)
 Models download from HuggingFace on first use:
@@ -198,10 +221,14 @@ SAM-Body4D uses MoGe2 to estimate camera intrinsics, which improves 3D reconstru
          │
          │  CAMERA_INTRINSICS dict:
          │  {
-         │    "focal_length": 1234.5,
+         │    "focal_length": 1234.5,      // pixels
+         │    "focal_length_mm": 35.0,     // mm (NEW in v0.4.2)
          │    "fov_x": 65.0,
-         │    "cx": 960.0,
-         │    "cy": 540.0,
+         │    "cx": 960.0,                 // principal point X
+         │    "cy": 540.0,                 // principal point Y
+         │    "film_offset_x_mm": 0.0,     // Maya film offset (NEW)
+         │    "film_offset_y_mm": 0.0,     // Maya film offset (NEW)
+         │    "sensor_width_mm": 36.0,     // film gate width
          │    "per_frame_focal": [...]
          │  }
          │
@@ -211,6 +238,22 @@ SAM-Body4D uses MoGe2 to estimate camera intrinsics, which improves 3D reconstru
 │ Process             │   [[fx, 0, cx],
 └─────────────────────┘    [0, fy, cy],
                            [0,  0,  1]]
+```
+
+### Film Offset Calculation (v0.4.2)
+
+Film offset represents the displacement of the principal point (cx, cy) from the image center, expressed in film/sensor units. This is used in Maya's camera to match the original camera's optical center.
+
+```
+Film Offset X (mm) = (cx - width/2) / width × sensor_width
+Film Offset Y (mm) = (cy - height/2) / height × sensor_height
+```
+
+**Debug output example:**
+```
+[MoGe2] Average: FOV=65.0°, Focal=1234.5px (35.0mm @ 36mm sensor)
+[MoGe2] Principal Point: cx=960.0, cy=540.0
+[MoGe2] Film Offset: X=0.000mm (0.0000in), Y=0.000mm (0.0000in)
 ```
 
 Without MoGe2, SAM3DBody uses a default FOV (~60°), which may not match your camera.
@@ -404,8 +447,9 @@ MIT License - see [LICENSE](LICENSE)
 - [x] v0.3.15 - Reduced default chunk_size to 12, added VRAM logging
 - [x] v0.3.16 - Low VRAM mode with sequential CPU offload
 - [x] v0.4.0 - MoGe2 camera intrinsics, mesh overlay visualization
-- [ ] v0.5.0 - Body joint tracking using SAM-Body4D method
-- [ ] v1.0.0 - First stable release  
+- [x] v0.4.1 - SAM3DBody integration with BFloat16 fix, temporal smoothing
+- [x] v0.4.2 - Film offset calculation (cx/cy), automated render install, BFloat16 cache fix
+- [ ] v0.5.0 - Camera solver for nodal pan compensation
 - [ ] v1.0.0 - Stable release
 
 ## 🙏 Acknowledgments
