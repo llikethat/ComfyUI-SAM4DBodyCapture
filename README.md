@@ -9,6 +9,14 @@ A ComfyUI package integrating SAM-Body4D and Diffusion-VAS for robust human body
 
 ## 🎯 Features
 
+### v0.5.0 - Motion Analyzer (Phase 2A)
+- 📊 **Motion Analyzer Node** - Analyze subject motion from mesh sequence
+- 🦴 **Correct Joint Indices** - Uses SAM3DBody 18-joint keypoints (not SMPL)
+- 📍 **Direct 2D Keypoints** - Uses pred_keypoints_2d for accurate overlay
+- 📏 **Height Estimation** - Auto-estimate or user override for scale
+- 🦶 **Foot Contact Detection** - Detects grounded vs airborne frames
+- 🎛️ **Skeleton Mode Toggle** - Simple (18-joint) or Full (127-joint)
+
 ### v0.4.2 - Camera Intrinsics & Film Offset
 - 📷 **Film Offset Calculation** - cx/cy → Film Offset X/Y for Maya cameras
 - 🔧 **BFloat16 Cache Fix** - Auto-detects and reloads model if wrong dtype cached
@@ -449,7 +457,10 @@ MIT License - see [LICENSE](LICENSE)
 - [x] v0.4.0 - MoGe2 camera intrinsics, mesh overlay visualization
 - [x] v0.4.1 - SAM3DBody integration with BFloat16 fix, temporal smoothing
 - [x] v0.4.2 - Film offset calculation (cx/cy), automated render install, BFloat16 cache fix
-- [ ] v0.5.0 - Camera solver for nodal pan compensation
+- [x] v0.5.0 - Motion Analyzer with correct joint indices, 2D keypoint support
+- [ ] v0.5.1 - Camera Solver (background tracking for pan/tilt compensation)
+- [ ] v0.5.2 - Full Skeleton mode (127-joint MHR integration)
+- [ ] v0.6.0 - Skeleton Export (joint rotations for retargeting)
 - [ ] v1.0.0 - Stable release
 
 ## 🙏 Acknowledgments

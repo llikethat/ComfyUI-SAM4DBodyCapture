@@ -348,7 +348,7 @@ class SAM4DBodyBatchProcess:
             "vertices": [],           # List of per-frame vertices [N, 3]
             "faces": faces,           # Shared topology [F, 3]
             "params": {               # Per-frame parameters
-                "joint_coords": [],
+                "joint_coords": [],       # 127-joint full skeleton
                 "joint_rotations": [],
                 "camera_t": [],
                 "focal_length": [],
@@ -357,6 +357,8 @@ class SAM4DBodyBatchProcess:
                 "global_rot": [],
                 "shape": [],
                 "scale": [],
+                "keypoints_2d": [],       # 18-joint 2D positions (for overlay)
+                "keypoints_3d": [],       # 18-joint 3D positions
             },
             "frame_count": 0,
             "fps": 30.0,
@@ -477,6 +479,9 @@ class SAM4DBodyBatchProcess:
             mesh_sequence["params"]["global_rot"].append(output.get("global_rot", None))
             mesh_sequence["params"]["shape"].append(output.get("shape_params", None))
             mesh_sequence["params"]["scale"].append(output.get("scale_params", None))
+            # 18-joint keypoints for visualization/analysis
+            mesh_sequence["params"]["keypoints_2d"].append(output.get("pred_keypoints_2d", None))
+            mesh_sequence["params"]["keypoints_3d"].append(output.get("pred_keypoints_3d", None))
             
             mesh_sequence["frame_count"] += 1
             

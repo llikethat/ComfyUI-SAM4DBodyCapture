@@ -7,9 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned for v0.5.0
-- Camera solver for nodal pan/tilt compensation
-- Body translation from camera rotation
+### Planned for v0.5.1
+- Camera Solver node for background tracking
+- Pan/tilt/roll detection from video
+
+### Planned for v0.5.2
+- Full Skeleton mode (127-joint MHR integration)
+- Finger tracking support
+
+---
+
+## [0.5.0] - 2025-12-29
+
+### Added - Motion Analyzer (Phase 2A)
+
+#### New Nodes
+- **📊 Motion Analyzer** - Analyze subject motion from SAM3DBody mesh sequence
+- **📏 Scale Info Display** - Display height/scale information
+
+#### Motion Analyzer Features
+- **Correct Joint Indices** - Fixed skeleton overlay using SAM3DBody's 18-joint format
+- **Direct 2D Keypoints** - Uses `pred_keypoints_2d` for accurate screen positions
+- **Height Estimation** - Auto-estimate from joint chain or user override
+- **Foot Contact Detection** - Detects grounded vs airborne frames
+- **Velocity Tracking** - Per-frame pelvis velocity (2D and 3D)
+- **Depth Estimation** - Subject distance from camera
+- **Debug Overlay** - Skeleton, pelvis marker, velocity arrows on video
+
+#### Skeleton Mode Toggle
+```
+Simple Skeleton (default): 18-joint keypoints
+  - Uses pred_keypoints_2d / pred_keypoints_3d
+  - Faster, sufficient for body tracking
+  
+Full Skeleton: 127-joint SMPL-H (v0.5.2)
+  - Uses pred_joint_coords
+  - Includes finger joints for detailed tracking
+```
+
+#### Data Capture Enhancement
+- Now captures `pred_keypoints_2d` (18-joint 2D positions)
+- Now captures `pred_keypoints_3d` (18-joint 3D positions)
+- Stored in mesh_sequence params for downstream nodes
+
+#### Joint Index Reference (SAM3DBody 18-joint)
+```
+0: pelvis, 1: spine1, 2: spine2, 3: spine3, 4: neck, 5: head
+6: left_shoulder, 7: left_elbow, 8: left_wrist
+9: right_shoulder, 10: right_elbow, 11: right_wrist  
+12: left_hip, 13: left_knee, 14: left_ankle
+15: right_hip, 16: right_knee, 17: right_ankle
+```
+
+#### Fixed
+- Skeleton overlay now correctly aligns with subject (was using wrong SMPL indices)
+- Height estimation now uses correct joint chain (hip→knee→ankle)
+- Projection formula matches SAM3DBody's camera model (no Y negation)
 
 ---
 
