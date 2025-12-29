@@ -13,10 +13,12 @@ Version History:
 - v0.3.0: Export nodes (FBX, Alembic, OBJ)
 - v0.4.0: MoGe2 camera intrinsics, mesh overlay visualization
 - v0.4.1: SAM3DBody integration with BFloat16 fix, batch video processing
+- v0.4.2: Film offset, automated render install, cache fix
+- v0.5.0: Motion disambiguation (Motion Analyzer, Camera Solver, Motion Decoder)
 - v1.0.0: (Planned) First stable release
 """
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 __author__ = "llikethat"
 __license__ = "MIT"
 
@@ -202,6 +204,27 @@ except ImportError as e:
     print(f"[SAM4DBodyCapture] SAM3DBody integration not available: {e}")
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading SAM3DBody integration: {e}")
+
+# ==================== Motion Analysis Nodes (v0.5.0+) ====================
+try:
+    from .nodes import motion_analyzer
+    
+    NODE_CLASS_MAPPINGS.update({
+        "SAM4D_MotionAnalyzer": motion_analyzer.SAM4DMotionAnalyzer,
+        "SAM4D_ScaleInfoDisplay": motion_analyzer.SAM4DScaleInfoDisplay,
+    })
+    
+    NODE_DISPLAY_NAME_MAPPINGS.update({
+        "SAM4D_MotionAnalyzer": "📊 Motion Analyzer",
+        "SAM4D_ScaleInfoDisplay": "📏 Scale Info Display",
+    })
+    
+    print(f"[SAM4DBodyCapture] Motion Analysis nodes loaded")
+    
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] Motion Analysis nodes not available: {e}")
+except Exception as e:
+    print(f"[SAM4DBodyCapture] Error loading Motion Analysis nodes: {e}")
 
 # ==================== Final Setup ====================
 print(f"[SAM4DBodyCapture] v{__version__} loaded {len(NODE_CLASS_MAPPINGS)} nodes")
