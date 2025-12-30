@@ -10,7 +10,7 @@ Provides integrated SAM3DBody nodes with:
 """
 
 # Version for logging
-VERSION = "0.5.0-debug8"
+VERSION = "0.5.0-debug9"
 
 import os
 import sys
@@ -19,7 +19,17 @@ import torch
 import numpy as np
 import cv2
 from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime, timezone, timedelta
 import folder_paths
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+
 
 # Global cache for model
 _MODEL_CACHE = {}
@@ -51,14 +61,14 @@ def _clear_model_cache(model_path: str = None):
         keys_to_remove = [k for k in _MODEL_CACHE if model_path in k]
         for k in keys_to_remove:
             del _MODEL_CACHE[k]
-            print(f"[SAM4DBodyCapture] Cleared cached model: {k}")
+            print(f"[{get_timestamp()}] [SAM4DBodyCapture] Cleared cached model: {k}")
         if model_path in _LAST_FP16_SETTING:
             del _LAST_FP16_SETTING[model_path]
     else:
         # Clear all
         _MODEL_CACHE.clear()
         _LAST_FP16_SETTING.clear()
-        print("[SAM4DBodyCapture] Cleared all model cache")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Cleared all model cache")
 
 
 class SAM4DBodyLoader:
@@ -104,7 +114,7 @@ class SAM4DBodyLoader:
         # Check if force_fp16 setting changed - if so, clear cache for this model
         if model_path in _LAST_FP16_SETTING:
             if _LAST_FP16_SETTING[model_path] != force_fp16:
-                print(f"[SAM4DBodyCapture] force_fp16 changed ({_LAST_FP16_SETTING[model_path]} → {force_fp16}), clearing cache...")
+                print(f"[{get_timestamp()}] [SAM4DBodyCapture] force_fp16 changed ({_LAST_FP16_SETTING[model_path]} → {force_fp16}), clearing cache...")
                 _clear_model_cache(model_path)
         
         # Check cache
@@ -116,13 +126,13 @@ class SAM4DBodyLoader:
             if force_fp16:
                 model_dtype = _check_model_dtype(cached_model)
                 if model_dtype == "bfloat16":
-                    print(f"[SAM4DBodyCapture] Cached model has wrong dtype ({model_dtype}), reloading...")
+                    print(f"[{get_timestamp()}] [SAM4DBodyCapture] Cached model has wrong dtype ({model_dtype}), reloading...")
                     _clear_model_cache(model_path)
                 else:
-                    print(f"[SAM4DBodyCapture] Using cached SAM3DBody model (dtype: {model_dtype})")
+                    print(f"[{get_timestamp()}] [SAM4DBodyCapture] Using cached SAM3DBody model (dtype: {model_dtype})")
                     return (cached_model,)
             else:
-                print(f"[SAM4DBodyCapture] Using cached SAM3DBody model")
+                print(f"[{get_timestamp()}] [SAM4DBodyCapture] Using cached SAM3DBody model")
                 return (cached_model,)
         
         # Track the setting for this model path
@@ -200,14 +210,14 @@ class SAM4DBodyLoader:
             model_cfg.TRAIN.FP16_TYPE = "float16"  # Fix sparse matrix error!
             model_cfg.MODEL.MHR_HEAD.MHR_MODEL_PATH = mhr_path
             model_cfg.freeze()
-            print(f"[SAM4DBodyCapture] Forced FP16_TYPE=float16 (fixes BFloat16 sparse error)")
+            print(f"[{get_timestamp()}] [SAM4DBodyCapture] Forced FP16_TYPE=float16 (fixes BFloat16 sparse error)")
         else:
             model_cfg.defrost()
             model_cfg.MODEL.MHR_HEAD.MHR_MODEL_PATH = mhr_path
             model_cfg.freeze()
         
         # Initialize model
-        print(f"[SAM4DBodyCapture] Loading SAM3DBody model...")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Loading SAM3DBody model...")
         model = SAM3DBody(model_cfg)
         
         # Load checkpoint
@@ -232,13 +242,13 @@ class SAM4DBodyLoader:
         # Verify dtype after loading
         final_dtype = _check_model_dtype(model_dict)
         if force_fp16 and final_dtype == "bfloat16":
-            print(f"[SAM4DBodyCapture] WARNING: Model still using bfloat16! Try restarting ComfyUI.")
+            print(f"[{get_timestamp()}] [SAM4DBodyCapture] WARNING: Model still using bfloat16! Try restarting ComfyUI.")
         else:
-            print(f"[SAM4DBodyCapture] Model dtype: {final_dtype}")
+            print(f"[{get_timestamp()}] [SAM4DBodyCapture] Model dtype: {final_dtype}")
         
         # Cache it
         _MODEL_CACHE[cache_key] = model_dict
-        print(f"[SAM4DBodyCapture] SAM3DBody model loaded successfully on {device}")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] SAM3DBody model loaded successfully on {device}")
         
         return (model_dict,)
 
@@ -330,7 +340,7 @@ class SAM4DBodyBatchProcess:
         
         # Get number of frames
         num_frames = images.shape[0]
-        print(f"[SAM4DBodyCapture v{VERSION}] Processing {num_frames} frames through SAM3DBody...")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture v{VERSION}] Processing {num_frames} frames through SAM3DBody...")
         
         # Process camera intrinsics
         cam_int = None
@@ -608,10 +618,10 @@ class SAM4DTemporalSmoothing:
         
         vertices_list = mesh_sequence.get("vertices", [])
         if len(vertices_list) < 2:
-            print("[SAM4DBodyCapture] Not enough frames for temporal smoothing")
+            print(f"[{get_timestamp()}] [SAM4DBodyCapture] Not enough frames for temporal smoothing")
             return (mesh_sequence,)
         
-        print(f"[SAM4DBodyCapture] Applying temporal smoothing (window={smoothing_window})...")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Applying temporal smoothing (window={smoothing_window})...")
         
         # Create a copy of the sequence
         smoothed_sequence = {
@@ -642,7 +652,7 @@ class SAM4DTemporalSmoothing:
                 smoothed_sequence["params"]["joint_rotations"], smoothing_window, rotation_smoothing
             )
         
-        print(f"[SAM4DBodyCapture] Temporal smoothing applied to {smoothed_sequence['frame_count']} frames")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Temporal smoothing applied to {smoothed_sequence['frame_count']} frames")
         
         return (smoothed_sequence,)
 

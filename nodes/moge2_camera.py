@@ -19,8 +19,16 @@ This is used by SAM-3D-Body for proper 3D mesh projection.
 import torch
 import numpy as np
 from typing import Tuple, Optional, Dict, List
+from datetime import datetime, timezone, timedelta
 import os
 import math
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 # Try to import MoGe2
 MOGE2_AVAILABLE = False
@@ -31,13 +39,13 @@ try:
     from moge.model.v2 import MoGeModel as _MoGeModel
     MoGeModel = _MoGeModel
     MOGE2_AVAILABLE = True
-    print("[MoGe2] MoGe2 v2 model available")
+    print(f"[{get_timestamp()}] [MoGe2] MoGe2 v2 model available")
 except ImportError:
     try:
         from moge.model import MoGeModel as _MoGeModel
         MoGeModel = _MoGeModel
         MOGE2_AVAILABLE = True
-        print("[MoGe2] MoGe model available")
+        print(f"[{get_timestamp()}] [MoGe2] MoGe model available")
     except ImportError:
         pass
 
@@ -177,9 +185,9 @@ class MoGe2CameraIntrinsics:
             return True
         
         if not MOGE2_AVAILABLE or MoGeModel is None:
-            print("[MoGe2] MoGe2 not available.")
-            print("[MoGe2] Install with: pip install moge")
-            print("[MoGe2] Or clone from: https://github.com/microsoft/MoGe")
+            print(f"[{get_timestamp()}] [MoGe2] MoGe2 not available.")
+            print(f"[{get_timestamp()}] [MoGe2] Install with: pip install moge")
+            print(f"[{get_timestamp()}] [MoGe2] Or clone from: https://github.com/microsoft/MoGe")
             return False
         
         try:
@@ -272,7 +280,7 @@ class MoGe2CameraIntrinsics:
         
         # Try to load MoGe2
         if not self.load_model(model_name, use_fp16):
-            print("[MoGe2] Using fallback intrinsics (default FOV=60°)")
+            print(f"[{get_timestamp()}] [MoGe2] Using fallback intrinsics (default FOV=60°)")
             print(f"[MoGe2] Principal Point: cx={cx:.1f}, cy={cy:.1f}")
             print(f"[MoGe2] Film Offset: X={film_offsets['film_offset_x_mm']:.3f}mm, Y={film_offsets['film_offset_y_mm']:.3f}mm")
             return (intrinsics, depth_maps, float(default_focal))

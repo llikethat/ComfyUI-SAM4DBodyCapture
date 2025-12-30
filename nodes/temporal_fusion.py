@@ -10,8 +10,16 @@ import os
 import numpy as np
 import torch
 from typing import Dict, Tuple, Any, Optional, List
+from datetime import datetime, timezone, timedelta
 from scipy.ndimage import gaussian_filter1d
 from collections import defaultdict
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 # Import our pipeline types
 from .sam4d_pipeline import SAM4DMeshSequence
@@ -277,7 +285,7 @@ class SAM4DTemporalFusion:
         if method == "none":
             return (seq.to_dict(),)
         
-        print(f"[SAM4D] Applying {method} smoothing (strength={smoothing_strength})")
+        print(f"[{get_timestamp()}] [SAM4D] Applying {method} smoothing (strength={smoothing_strength})")
         
         # Convert strength to method-specific parameter
         if method == "gaussian":
@@ -293,14 +301,14 @@ class SAM4DTemporalFusion:
             seq.vertices = smooth_vertices_sequence(
                 seq.vertices, method=method, sigma=sigma, alpha=alpha
             )
-            print(f"[SAM4D] Smoothed {len(seq.vertices)} frames of vertices")
+            print(f"[{get_timestamp()}] [SAM4D] Smoothed {len(seq.vertices)} frames of vertices")
         
         # Smooth parameters
         if smooth_params and seq.params:
             seq.params = smooth_params_sequence(
                 seq.params, method=method, sigma=sigma, alpha=alpha
             )
-            print(f"[SAM4D] Smoothed {len(seq.params)} parameter sets")
+            print(f"[{get_timestamp()}] [SAM4D] Smoothed {len(seq.params)} parameter sets")
         
         return (seq.to_dict(),)
 
@@ -505,9 +513,9 @@ class SAM4DCreateMeshSequence:
                                        for k, v in params.items()}
                         seq.add_frame(vertices[i], params=frame_params, person_id=person_id)
             else:
-                print("[SAM4D] Warning: No vertex data in mesh_data")
+                print(f"[{get_timestamp()}] [SAM4D] Warning: No vertex data in mesh_data")
         else:
-            print("[SAM4D] Warning: No mesh_data provided to CreateMeshSequence")
+            print(f"[{get_timestamp()}] [SAM4D] Warning: No mesh_data provided to CreateMeshSequence")
         
         return (seq.to_dict(),)
 

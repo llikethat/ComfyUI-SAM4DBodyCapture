@@ -8,6 +8,14 @@ Follows the same approach as SAM3DBody's process_multiple.py
 import os
 import sys
 from pathlib import Path
+from datetime import datetime, timezone, timedelta
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 # Set up pyrender for headless rendering BEFORE importing
 if "PYOPENGL_PLATFORM" not in os.environ:
@@ -225,11 +233,11 @@ class SAM4DMeshSequenceOverlay:
         params = mesh_sequence.get("params", {})
         
         if not vertices_list:
-            print("[MeshOverlay] No vertices in mesh sequence")
+            print(f"[{get_timestamp()}] [MeshOverlay] No vertices in mesh sequence")
             return (images,)
         
         if faces is None:
-            print("[MeshOverlay] No faces in mesh sequence")
+            print(f"[{get_timestamp()}] [MeshOverlay] No faces in mesh sequence")
             return (images,)
         
         # Ensure faces is numpy array
@@ -264,15 +272,15 @@ class SAM4DMeshSequenceOverlay:
             import trimesh
             
             USE_PYRENDER = True
-            print("[MeshOverlay] Using SAM3DBody pyrender Renderer")
+            print(f"[{get_timestamp()}] [MeshOverlay] Using SAM3DBody pyrender Renderer")
         except ImportError as e:
             pyrender_error = str(e)
             print(f"[MeshOverlay] Pyrender not available: {pyrender_error}")
-            print("[MeshOverlay] Using solid mesh fallback (depth-sorted triangles)")
+            print(f"[{get_timestamp()}] [MeshOverlay] Using solid mesh fallback (depth-sorted triangles)")
         except Exception as e:
             pyrender_error = str(e)
             print(f"[MeshOverlay] Renderer error: {pyrender_error}")
-            print("[MeshOverlay] Using solid mesh fallback")
+            print(f"[{get_timestamp()}] [MeshOverlay] Using solid mesh fallback")
         
         result_frames = []
         

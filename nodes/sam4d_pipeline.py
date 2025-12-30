@@ -14,8 +14,16 @@ import sys
 import torch
 import numpy as np
 from typing import Dict, Tuple, Any, Optional, List, Union
+from datetime import datetime, timezone, timedelta
 from PIL import Image
 import cv2
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 # Import our Diffusion-VAS module
 from .diffusion_vas import (
@@ -232,7 +240,7 @@ class SAM4DPipelineLoader:
         # Dtype
         dt = torch.float16 if dtype == "float16" else torch.float32
         
-        print(f"[SAM4D] Loading pipeline on {dev}")
+        print(f"[{get_timestamp()}] [SAM4D] Loading pipeline on {dev}")
         
         # Create VAS wrapper with token
         vas_wrapper = DiffusionVASWrapper(
@@ -266,7 +274,7 @@ class SAM4DPipelineLoader:
             "_type": "SAM4D_PIPELINE",
         }
         
-        print(f"[SAM4D] Pipeline ready: depth=external, amodal={amodal_loaded}, completion={completion_loaded}")
+        print(f"[{get_timestamp()}] [SAM4D] Pipeline ready: depth=external, amodal={amodal_loaded}, completion={completion_loaded}")
         
         return (pipeline,)
 
@@ -363,7 +371,7 @@ class SAM4DOcclusionDetector:
         # num_frames=0 means auto (use actual frame count) - SAM-Body4D approach
         actual_num_frames = B if num_frames == 0 else num_frames
         
-        print(f"[SAM4D] Detecting occlusions for {B} frames, objects: {obj_ids}, num_frames={actual_num_frames}")
+        print(f"[{get_timestamp()}] [SAM4D] Detecting occlusions for {B} frames, objects: {obj_ids}, num_frames={actual_num_frames}")
         
         # Ensure masks shape
         if masks.dim() == 2:
@@ -374,7 +382,7 @@ class SAM4DOcclusionDetector:
         
         # Use external depth if provided, otherwise use gradient fallback
         if depth_maps is not None:
-            print("[SAM4D] Using external depth maps")
+            print(f"[{get_timestamp()}] [SAM4D] Using external depth maps")
             # Ensure depth is in correct format [B, H, W, C]
             if depth_maps.dim() == 3:
                 depth_maps = depth_maps.unsqueeze(-1).repeat(1, 1, 1, 3)
@@ -382,7 +390,7 @@ class SAM4DOcclusionDetector:
                 depth_maps = depth_maps.repeat(1, 1, 1, 3)
             depth_out = depth_maps
         elif vas_wrapper is not None:
-            print("[SAM4D] Estimating depth (using gradient fallback)...")
+            print(f"[{get_timestamp()}] [SAM4D] Estimating depth (using gradient fallback)...")
             _, depth_out = vas_wrapper.run_amodal_segmentation(
                 images=images,
                 modal_masks=masks,
@@ -395,7 +403,7 @@ class SAM4DOcclusionDetector:
             depth_out = depth_out.unsqueeze(-1).repeat(1, 1, 1, 3) if depth_out.dim() == 3 else depth_out
         else:
             # No pipeline, no external depth - create gradient fallback
-            print("[SAM4D] No pipeline - using gradient depth fallback")
+            print(f"[{get_timestamp()}] [SAM4D] No pipeline - using gradient depth fallback")
             depth_out = torch.zeros(B, H, W, 3, device=images.device)
             for i in range(B):
                 y_grad = torch.linspace(0, 1, H).view(H, 1).expand(H, W)
@@ -403,7 +411,7 @@ class SAM4DOcclusionDetector:
         
         # If no amodal pipeline, return empty occlusion info
         if not amodal_available or vas_wrapper is None:
-            print("[SAM4D] No amodal pipeline - assuming no occlusions")
+            print(f"[{get_timestamp()}] [SAM4D] No amodal pipeline - assuming no occlusions")
             for obj_id in obj_ids:
                 occ_info.add_object_results(obj_id, [1.0] * B, iou_threshold)
             
@@ -449,7 +457,7 @@ class SAM4DOcclusionDetector:
             # Combine amodal masks
             all_amodal_masks = torch.maximum(all_amodal_masks, amodal_masks.to(all_amodal_masks.device))
             
-            print(f"[SAM4D] Object {obj_id}: {sum(occ_info.is_occluded[obj_id])} occluded frames")
+            print(f"[{get_timestamp()}] [SAM4D] Object {obj_id}: {sum(occ_info.is_occluded[obj_id])} occluded frames")
         
         return (occ_info.to_dict(), depth_out, all_amodal_masks)
 
@@ -515,7 +523,7 @@ class SAM4DAmodalCompletion:
     ):
         # Handle both pipeline types
         if pipeline is None:
-            print("[SAM4D] No pipeline provided - returning original masks/images")
+            print(f"[{get_timestamp()}] [SAM4D] No pipeline provided - returning original masks/images")
             return (masks, images)
         elif pipeline.get("_type") == "SAM4D_PIPELINE":
             vas_wrapper = pipeline["vas_wrapper"]
@@ -528,7 +536,7 @@ class SAM4DAmodalCompletion:
             completion_available = pipeline.get("completion_loaded", False)
         
         if vas_wrapper is None:
-            print("[SAM4D] No pipeline wrapper - returning original masks/images")
+            print(f"[{get_timestamp()}] [SAM4D] No pipeline wrapper - returning original masks/images")
             return (masks, images)
         
         occ_info = SAM4DOcclusionInfo.from_dict(occlusion_info)
@@ -542,10 +550,10 @@ class SAM4DAmodalCompletion:
             ranges = occ_info.get_frames_needing_completion(obj_id, margin=2)
             
             if not ranges:
-                print(f"[SAM4D] Object {obj_id}: No occlusions to complete")
+                print(f"[{get_timestamp()}] [SAM4D] Object {obj_id}: No occlusions to complete")
                 continue
             
-            print(f"[SAM4D] Object {obj_id}: Completing {len(ranges)} ranges")
+            print(f"[{get_timestamp()}] [SAM4D] Object {obj_id}: Completing {len(ranges)} ranges")
             
             for start, end in ranges:
                 # Extract frame range

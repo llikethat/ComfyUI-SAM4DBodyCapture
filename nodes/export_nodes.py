@@ -17,7 +17,14 @@ import tempfile
 import numpy as np
 import torch
 from typing import Dict, Tuple, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 # Try to import folder_paths for ComfyUI output directory
 try:
@@ -81,7 +88,7 @@ def find_blender() -> Optional[str]:
     for loc in locations:
         if loc and os.path.exists(loc):
             _BLENDER_PATH = loc
-            print(f"[SAM4D Export] Found Blender: {loc}")
+            print(f"[{get_timestamp()}] [SAM4D Export] Found Blender: {loc}")
             return loc
     
     return None
@@ -623,16 +630,16 @@ class SAM4DExportCharacterFBX:
         seq = SAM4DMeshSequence.from_dict(mesh_sequence)
         
         if seq.frame_count == 0:
-            print("[SAM4D Export] No frames in sequence")
+            print(f"[{get_timestamp()}] [SAM4D Export] No frames in sequence")
             return ("",)
         
-        print(f"[SAM4D Export] flip_x={flip_x}")
+        print(f"[{get_timestamp()}] [SAM4D Export] flip_x={flip_x}")
         
         # Find Blender
         blender_path = find_blender()
         if not blender_path:
-            print("[SAM4D Export] Blender not found!")
-            print("[SAM4D Export] Install Blender or ensure ComfyUI-SAM3DBody is installed")
+            print(f"[{get_timestamp()}] [SAM4D Export] Blender not found!")
+            print(f"[{get_timestamp()}] [SAM4D Export] Install Blender or ensure ComfyUI-SAM3DBody is installed")
             return ("",)
         
         # Use ComfyUI output directory
@@ -641,7 +648,7 @@ class SAM4DExportCharacterFBX:
         
         # Generate incremental filename to avoid overwriting
         output_path = self._get_incremental_filepath(output_dir, filename, ".fbx")
-        print(f"[SAM4D Export] Output file: {os.path.basename(output_path)}")
+        print(f"[{get_timestamp()}] [SAM4D Export] Output file: {os.path.basename(output_path)}")
         
         # Build JSON for Blender script
         up_axis = "Y" if "Y-up" in coordinate_system else "Z"
@@ -659,7 +666,7 @@ class SAM4DExportCharacterFBX:
             image_height = camera_intrinsics.get("height", 1080)
             cx = camera_intrinsics.get("cx", image_width / 2.0)
             cy = camera_intrinsics.get("cy", image_height / 2.0)
-            print(f"[SAM4D Export] Using camera intrinsics: focal={focal_length:.1f}px, size={image_width}x{image_height}")
+            print(f"[{get_timestamp()}] [SAM4D Export] Using camera intrinsics: focal={focal_length:.1f}px, size={image_width}x{image_height}")
         else:
             cx = image_width / 2.0
             cy = image_height / 2.0
@@ -693,16 +700,16 @@ class SAM4DExportCharacterFBX:
         
         # Enhanced debug output
         print(f"\n[SAM4D Export] ========== CAMERA DEBUG INFO ==========")
-        print(f"[SAM4D Export] Video Resolution: {image_width} x {image_height}")
-        print(f"[SAM4D Export] Video Center: ({center_x:.1f}, {center_y:.1f})")
-        print(f"[SAM4D Export] Principal Point (cx, cy): ({cx:.1f}, {cy:.1f})")
-        print(f"[SAM4D Export] Offset from Center: ({offset_x_px:.1f}, {offset_y_px:.1f}) px")
-        print(f"[SAM4D Export] Sensor Size: {sensor_width:.1f} x {sensor_height:.1f} mm")
-        print(f"[SAM4D Export] Film Offset X: {film_offset_x_mm:.4f} mm ({film_offset_x_inch:.5f} in)")
-        print(f"[SAM4D Export] Film Offset Y: {film_offset_y_mm:.4f} mm ({film_offset_y_inch:.5f} in)")
+        print(f"[{get_timestamp()}] [SAM4D Export] Video Resolution: {image_width} x {image_height}")
+        print(f"[{get_timestamp()}] [SAM4D Export] Video Center: ({center_x:.1f}, {center_y:.1f})")
+        print(f"[{get_timestamp()}] [SAM4D Export] Principal Point (cx, cy): ({cx:.1f}, {cy:.1f})")
+        print(f"[{get_timestamp()}] [SAM4D Export] Offset from Center: ({offset_x_px:.1f}, {offset_y_px:.1f}) px")
+        print(f"[{get_timestamp()}] [SAM4D Export] Sensor Size: {sensor_width:.1f} x {sensor_height:.1f} mm")
+        print(f"[{get_timestamp()}] [SAM4D Export] Film Offset X: {film_offset_x_mm:.4f} mm ({film_offset_x_inch:.5f} in)")
+        print(f"[{get_timestamp()}] [SAM4D Export] Film Offset Y: {film_offset_y_mm:.4f} mm ({film_offset_y_inch:.5f} in)")
         if focal_mm:
-            print(f"[SAM4D Export] Focal Length: {focal_length:.1f} px = {focal_mm:.2f} mm (@ {sensor_width}mm sensor)")
-        print(f"[SAM4D Export] =============================================\n")
+            print(f"[{get_timestamp()}] [SAM4D Export] Focal Length: {focal_length:.1f} px = {focal_mm:.2f} mm (@ {sensor_width}mm sensor)")
+        print(f"[{get_timestamp()}] [SAM4D Export] =============================================\n")
         
         frames_data = []
         for i, vertices in enumerate(seq.vertices):
@@ -807,9 +814,9 @@ class SAM4DExportCharacterFBX:
                 "1" if include_camera else "0",
             ]
             
-            print(f"[SAM4D Export] Exporting {seq.frame_count} frames to FBX...")
-            print(f"[SAM4D Export] Include camera: {include_camera}")
-            print(f"[SAM4D Export] Output: {output_path}")
+            print(f"[{get_timestamp()}] [SAM4D Export] Exporting {seq.frame_count} frames to FBX...")
+            print(f"[{get_timestamp()}] [SAM4D Export] Include camera: {include_camera}")
+            print(f"[{get_timestamp()}] [SAM4D Export] Output: {output_path}")
             
             result = subprocess.run(
                 cmd,
@@ -820,21 +827,21 @@ class SAM4DExportCharacterFBX:
             
             if result.returncode != 0:
                 error = result.stderr[:500] if result.stderr else "Unknown error"
-                print(f"[SAM4D Export] Blender error: {error}")
+                print(f"[{get_timestamp()}] [SAM4D Export] Blender error: {error}")
                 return ("",)
             
             if not os.path.exists(output_path):
-                print("[SAM4D Export] FBX not created")
+                print(f"[{get_timestamp()}] [SAM4D Export] FBX not created")
                 return ("",)
             
-            print(f"[SAM4D Export] FBX saved: {output_path}")
+            print(f"[{get_timestamp()}] [SAM4D Export] FBX saved: {output_path}")
             return (output_path,)
             
         except subprocess.TimeoutExpired:
-            print("[SAM4D Export] Blender timed out")
+            print(f"[{get_timestamp()}] [SAM4D Export] Blender timed out")
             return ("",)
         except Exception as e:
-            print(f"[SAM4D Export] Error: {e}")
+            print(f"[{get_timestamp()}] [SAM4D Export] Error: {e}")
             return ("",)
         finally:
             if os.path.exists(json_path):
@@ -891,18 +898,18 @@ class SAM4DExportCharacterAlembic:
             has_alembic = False
         
         if not has_alembic:
-            print("[SAM4D Export] Alembic not available, exporting OBJ sequence")
+            print(f"[{get_timestamp()}] [SAM4D Export] Alembic not available, exporting OBJ sequence")
             obj_dir = os.path.join(output_dir, f"{filename}_obj")
             export_obj_sequence(obj_dir, seq, "mesh", coordinate_system)
             return (obj_dir,)
         
         filepath = os.path.join(output_dir, f"{filename}.abc")
         
-        print(f"[SAM4D Export] Exporting Alembic: {filepath}")
+        print(f"[{get_timestamp()}] [SAM4D Export] Exporting Alembic: {filepath}")
         
         export_alembic(filepath, seq, coordinate_system)
         
-        print(f"[SAM4D Export] Alembic saved")
+        print(f"[{get_timestamp()}] [SAM4D Export] Alembic saved")
         
         return (filepath,)
 
@@ -935,7 +942,7 @@ class SAM4DFBXViewer:
     def view_animation(self, fbx_path: str):
         """Display animated FBX playback in ComfyUI UI."""
         try:
-            print(f"[SAM4D FBX Viewer] Displaying: {fbx_path}")
+            print(f"[{get_timestamp()}] [SAM4D FBX Viewer] Displaying: {fbx_path}")
 
             return {
                 "ui": {
@@ -945,7 +952,7 @@ class SAM4DFBXViewer:
             }
 
         except Exception as e:
-            print(f"[SAM4D FBX Viewer] Error: {e}")
+            print(f"[{get_timestamp()}] [SAM4D FBX Viewer] Error: {e}")
             return {
                 "ui": {
                     "fbx_path": [""]

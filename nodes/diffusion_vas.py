@@ -12,8 +12,16 @@ import sys
 import torch
 import numpy as np
 from typing import Dict, Tuple, Any, Optional, List
+from datetime import datetime, timezone, timedelta
 from PIL import Image
 import cv2
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def get_timestamp():
+    """Get current timestamp in IST format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 # ============================================================================
 # Dependency Checks
@@ -26,7 +34,7 @@ try:
     import diffusers
     DIFFUSERS_AVAILABLE = True
 except ImportError:
-    print("[Diffusion-VAS] diffusers not installed")
+    print(f"[{get_timestamp()}] [Diffusion-VAS] diffusers not installed")
 
 try:
     from torchvision import transforms
@@ -43,7 +51,7 @@ try:
     
     from diffusion_vas.pipeline_diffusion_vas import DiffusionVASPipeline
     LOCAL_VAS_AVAILABLE = True
-    print("[Diffusion-VAS] Local VAS pipeline loaded")
+    print(f"[{get_timestamp()}] [Diffusion-VAS] Local VAS pipeline loaded")
 except Exception as e:
     print(f"[Diffusion-VAS] Local VAS pipeline not available: {e}")
     DiffusionVASPipeline = None
@@ -232,10 +240,10 @@ class DiffusionVASWrapper:
         
         # Prepare depth output
         if depth_maps is not None:
-            print("[VAS] Using external depth maps")
+            print(f"[{get_timestamp()}] [VAS] Using external depth maps")
             depth_out = depth_maps[..., 0] if depth_maps.dim() == 4 else depth_maps
         else:
-            print("[VAS] Using gradient depth fallback")
+            print(f"[{get_timestamp()}] [VAS] Using gradient depth fallback")
             depth_pixels_full = estimate_depth_gradient(images, resolution)
             depth_out = depth_pixels_full.squeeze(0)[:, 0, :, :]
             depth_out = (depth_out + 1) / 2
@@ -523,13 +531,13 @@ class DiffusionVASWrapper:
             if not attr.startswith('_'):
                 setattr(diffusion_vas_pkg, attr, getattr(pipeline_diffusion_vas, attr))
         
-        print("[VAS] Registered models.diffusion_vas module alias")
+        print(f"[{get_timestamp()}] [VAS] Registered models.diffusion_vas module alias")
     
     def load_amodal(self, model_id: str = None, auto_download: bool = True, low_vram: bool = False):
         """Load amodal segmentation pipeline."""
         if not LOCAL_VAS_AVAILABLE:
-            print("[VAS] Local pipeline required but not available")
-            print("[VAS] Ensure lib/diffusion_vas/ contains pipeline files")
+            print(f"[{get_timestamp()}] [VAS] Local pipeline required but not available")
+            print(f"[{get_timestamp()}] [VAS] Ensure lib/diffusion_vas/ contains pipeline files")
             return False
         
         # Register module alias so HF checkpoint can find our custom classes
@@ -554,25 +562,25 @@ class DiffusionVASWrapper:
             
             # Memory optimization based on mode
             if low_vram:
-                print("[VAS] Using sequential CPU offload (low VRAM mode)")
+                print(f"[{get_timestamp()}] [VAS] Using sequential CPU offload (low VRAM mode)")
                 self.amodal_pipeline.enable_sequential_cpu_offload()
             else:
-                print("[VAS] Using model CPU offload")
+                print(f"[{get_timestamp()}] [VAS] Using model CPU offload")
                 self.amodal_pipeline.enable_model_cpu_offload()
             
             # Additional memory optimizations
             if hasattr(self.amodal_pipeline, 'enable_attention_slicing'):
                 self.amodal_pipeline.enable_attention_slicing(1)
-                print("[VAS] Enabled attention slicing")
+                print(f"[{get_timestamp()}] [VAS] Enabled attention slicing")
             
             if hasattr(self.amodal_pipeline, 'enable_vae_slicing'):
                 self.amodal_pipeline.enable_vae_slicing()
-                print("[VAS] Enabled VAE slicing")
+                print(f"[{get_timestamp()}] [VAS] Enabled VAE slicing")
             
             self.amodal_pipeline.set_progress_bar_config(disable=True)
             self.amodal_loaded = True
             self.low_vram_mode = low_vram
-            print("[VAS] Amodal pipeline loaded")
+            print(f"[{get_timestamp()}] [VAS] Amodal pipeline loaded")
             return True
         except Exception as e:
             print(f"[VAS] Amodal load error: {e}")
@@ -605,7 +613,7 @@ class DiffusionVASWrapper:
             
             # Memory optimization based on mode
             if low_vram:
-                print("[VAS] Using sequential CPU offload for completion (low VRAM mode)")
+                print(f"[{get_timestamp()}] [VAS] Using sequential CPU offload for completion (low VRAM mode)")
                 self.completion_pipeline.enable_sequential_cpu_offload()
             else:
                 self.completion_pipeline.to(self.device)
@@ -619,7 +627,7 @@ class DiffusionVASWrapper:
             
             self.completion_pipeline.set_progress_bar_config(disable=True)
             self.completion_loaded = True
-            print("[VAS] Completion pipeline loaded")
+            print(f"[{get_timestamp()}] [VAS] Completion pipeline loaded")
             return True
         except Exception as e:
             print(f"[VAS] Completion load error: {e}")
@@ -679,7 +687,7 @@ class DiffusionVASWrapper:
         self.amodal_loaded = False
         self.completion_loaded = False
         torch.cuda.empty_cache()
-        print("[VAS] Models unloaded")
+        print(f"[{get_timestamp()}] [VAS] Models unloaded")
 
 # ============================================================================
 # ComfyUI Nodes
