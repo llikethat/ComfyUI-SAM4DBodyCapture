@@ -216,60 +216,10 @@ class SAM4DBodyLoader:
         model = model.to(device)
         model.eval()
         
-        # === AGGRESSIVE FIX: Convert MHR model to float16 to fix sparse ops ===
-        if force_fp16:
-            try:
-                # The MHR TorchScript model has bfloat16 tensors baked in
-                # We need to convert them to float16 after loading
-                if hasattr(model, 'head_pose') and hasattr(model.head_pose, 'mhr'):
-                    mhr_model = model.head_pose.mhr
-                    
-                    # Method 1: Try direct dtype conversion on TorchScript model
-                    try:
-                        # Check if we can convert the whole model
-                        original_device = next(mhr_model.parameters()).device
-                        mhr_model_fp16 = mhr_model.to(dtype=torch.float16, device=original_device)
-                        model.head_pose.mhr = mhr_model_fp16
-                        print(f"[SAM4DBodyCapture] Converted MHR model to float16 via .to()")
-                    except Exception as e:
-                        print(f"[SAM4DBodyCapture] Method 1 failed: {e}")
-                        
-                        # Method 2: Convert individual parameters
-                        converted = 0
-                        for name, param in mhr_model.named_parameters():
-                            if param.dtype == torch.bfloat16:
-                                param.data = param.data.to(torch.float16)
-                                converted += 1
-                        
-                        # Also convert buffers (non-trainable tensors)
-                        for name, buf in mhr_model.named_buffers():
-                            if buf.dtype == torch.bfloat16:
-                                converted += 1
-                        
-                        if converted > 0:
-                            print(f"[SAM4DBodyCapture] Found {converted} bfloat16 tensors in MHR model")
-                        else:
-                            print(f"[SAM4DBodyCapture] No bfloat16 tensors found in MHR parameters")
-                    
-                    # Method 3: Convert the whole SAM3DBody model
-                    try:
-                        # Convert the entire model, which should propagate to MHR
-                        def convert_bfloat16_to_float16(m):
-                            for param in m.parameters():
-                                if param.data.dtype == torch.bfloat16:
-                                    param.data = param.data.to(torch.float16)
-                            for buf_name, buf in m.named_buffers():
-                                if buf.dtype == torch.bfloat16:
-                                    m._buffers[buf_name.split('.')[-1]] = buf.to(torch.float16)
-                        
-                        model.apply(convert_bfloat16_to_float16)
-                        print(f"[SAM4DBodyCapture] Applied bfloat16→float16 conversion to all model params")
-                    except Exception as e:
-                        print(f"[SAM4DBodyCapture] Method 3 failed: {e}")
-                        
-            except Exception as e:
-                print(f"[SAM4DBodyCapture] Warning: Could not convert MHR model: {e}")
-                print(f"[SAM4DBodyCapture] The BFloat16 error may still occur. Try restarting ComfyUI.")
+        # Note: We removed the aggressive bfloat16→float16 conversion
+        # because the sparse CUDA ops don't support ANY half precision.
+        # The correct fix is to use the original SAM3DBody Model Loader
+        # which handles dtype correctly.
         
         # Create model dict
         model_dict = {
@@ -301,14 +251,17 @@ class SAM4DBodyBatchProcess:
     
     This node processes each frame individually and collects all outputs
     for temporal smoothing and FBX export.
+    
+    RECOMMENDED: Use the original "SAM3DBody Model Loader" node from ComfyUI-SAM3DBody
+    for best compatibility. Our SAM4DBodyLoader has dtype issues with some GPUs.
     """
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "model": ("SAM4D_BODY_MODEL", {
-                    "tooltip": "SAM3DBody model from SAM4DBodyLoader"
+                "model": ("SAM3D_MODEL", {
+                    "tooltip": "Use original 'SAM3DBody Model Loader' from ComfyUI-SAM3DBody"
                 }),
                 "images": ("IMAGE", {
                     "tooltip": "Video frames (batch of images)"
@@ -365,11 +318,34 @@ class SAM4DBodyBatchProcess:
         
         from sam_3d_body import SAM3DBodyEstimator
         
-        # Extract model components
-        sam_model = model["model"]
-        model_cfg = model["model_cfg"]
-        device = model["device"]
-        faces = model["faces"]
+        # Handle both SAM4D_BODY_MODEL and SAM3D_MODEL formats
+        if "model" in model:
+            # SAM4D_BODY_MODEL format (from our loader)
+            sam_model = model["model"]
+            model_cfg = model["model_cfg"]
+            device = model["device"]
+            faces = model["faces"]
+        elif "sam_3d_body_model" in model:
+            # SAM3D_MODEL format (from original SAM3DBody loader)
+            sam_model = model["sam_3d_body_model"]
+            model_cfg = model.get("model_cfg")
+            device = next(sam_model.parameters()).device if hasattr(sam_model, 'parameters') else "cuda"
+            # Get faces from model
+            try:
+                faces = sam_model.head_pose.faces.cpu().numpy()
+            except:
+                faces = None
+            print(f"[SAM4DBodyCapture] Using original SAM3D_MODEL format")
+        else:
+            # Try direct access (for compatibility)
+            sam_model = model
+            model_cfg = None
+            device = "cuda"
+            try:
+                faces = sam_model.head_pose.faces.cpu().numpy() if hasattr(sam_model, 'head_pose') else None
+            except:
+                faces = None
+            print(f"[SAM4DBodyCapture] Using direct model access")
         
         # Create estimator
         estimator = SAM3DBodyEstimator(
@@ -423,164 +399,165 @@ class SAM4DBodyBatchProcess:
         
         debug_images = []
         
-        # Process each frame
-        for frame_idx in range(num_frames):
-            print(f"  Frame {frame_idx + 1}/{num_frames}...", end="\r")
-            
-            # Get frame image (ComfyUI format: [B, H, W, C] float 0-1)
-            img_tensor = images[frame_idx]
-            img_np = (img_tensor.cpu().numpy() * 255).astype(np.uint8)
-            img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-            
-            # Get frame mask
-            mask_tensor = masks[frame_idx] if masks.dim() == 3 else masks[frame_idx, 0]
-            mask_np = mask_tensor.cpu().numpy()
-            if mask_np.max() <= 1.0:
-                mask_np = (mask_np * 255).astype(np.uint8)
-            
-            # Compute bbox from mask
-            bbox = self._compute_bbox_from_mask(mask_np)
-            if bbox is None:
-                print(f"\n  Warning: No person detected in frame {frame_idx}, using previous")
-                if len(mesh_sequence["vertices"]) > 0:
-                    # Copy previous frame's data
-                    mesh_sequence["vertices"].append(mesh_sequence["vertices"][-1].copy())
-                    for key in mesh_sequence["params"]:
-                        if len(mesh_sequence["params"][key]) > 0:
-                            mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
-                    mesh_sequence["frame_count"] += 1
-                    debug_images.append(img_np)  # Still add debug image
-                else:
-                    print(f"\n  Warning: First frame has no detection, skipping")
-                continue
-            
-            # Build camera intrinsics matrix for this frame
-            # SAM3DBody expects cam_int as a [1, 3, 3] intrinsic matrix tensor (with batch dim)
-            cam_int_tensor = None
-            if camera_intrinsics is not None:
-                # Get focal length for this frame
-                if per_frame_focal is not None and frame_idx < len(per_frame_focal):
-                    frame_focal = per_frame_focal[frame_idx]
-                else:
-                    frame_focal = camera_intrinsics.get("focal_length", 1000.0)
+        # CRITICAL: Disable autocast for entire processing loop
+        # The MHR model uses sparse CUDA operations that don't support half precision
+        # This matches how SAM3DBody2abc handles it (video_processor.py line 272)
+        with torch.cuda.amp.autocast(enabled=False):
+            # Process each frame
+            for frame_idx in range(num_frames):
+                print(f"  Frame {frame_idx + 1}/{num_frames}...", end="\r")
                 
-                # Get principal point
-                cx = camera_intrinsics.get("cx", img_np.shape[1] / 2)
-                cy = camera_intrinsics.get("cy", img_np.shape[0] / 2)
+                # Get frame image (ComfyUI format: [B, H, W, C] float 0-1)
+                img_tensor = images[frame_idx]
+                img_np = (img_tensor.cpu().numpy() * 255).astype(np.uint8)
+                img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
                 
-                # Build 3x3 intrinsic matrix: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
-                # For simplicity, assume fx = fy (square pixels)
-                cam_int_matrix = np.array([
-                    [frame_focal, 0, cx],
-                    [0, frame_focal, cy],
-                    [0, 0, 1]
-                ], dtype=np.float32)
+                # Get frame mask
+                mask_tensor = masks[frame_idx] if masks.dim() == 3 else masks[frame_idx, 0]
+                mask_np = mask_tensor.cpu().numpy()
+                if mask_np.max() <= 1.0:
+                    mask_np = (mask_np * 255).astype(np.uint8)
                 
-                # Add batch dimension: [3, 3] -> [1, 3, 3]
-                cam_int_tensor = torch.from_numpy(cam_int_matrix).unsqueeze(0).to(device)
-            else:
-                frame_focal = None
-            
-            # Save to temp file (SAM3DBody requires file path)
-            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                cv2.imwrite(tmp.name, img_bgr)
-                tmp_path = tmp.name
-            
-            try:
-                # Process frame 
-                # Note: SAM3DBody2abc doesn't pass cam_int, and it works
-                # Wrap in autocast to force float16 (fixes BFloat16 sparse error)
-                with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                    outputs = estimator.process_one_image(
-                        tmp_path,
-                        bboxes=bbox,
-                        masks=mask_np,
-                        # cam_int removed - causes issues and SAM3DBody2abc doesn't use it
-                        bbox_thr=0.5,
-                        use_mask=True,
-                        inference_type=inference_type,
-                    )
-            finally:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-            
-            if not outputs or len(outputs) == 0:
-                print(f"\n  Warning: SAM3DBody failed on frame {frame_idx}")
-                if len(mesh_sequence["vertices"]) > 0:
-                    # Copy previous frame's data
-                    mesh_sequence["vertices"].append(mesh_sequence["vertices"][-1].copy())
-                    for key in mesh_sequence["params"]:
-                        if mesh_sequence["params"][key]:
-                            mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
-                    mesh_sequence["frame_count"] += 1
-                    debug_images.append(img_np)  # Still add debug image
-                else:
-                    print(f"\n  Warning: First frame failed, skipping")
-                continue
-            
-            # Get the requested person (or first if not enough detected)
-            output_idx = min(person_index, len(outputs) - 1)
-            output = outputs[output_idx]
-            
-            # Add vertices to sequence
-            vertices = output.get("pred_vertices", None)
-            if vertices is not None:
-                mesh_sequence["vertices"].append(vertices)
-            
-            # Add parameters to sequence
-            mesh_sequence["params"]["joint_coords"].append(output.get("pred_joint_coords", None))
-            mesh_sequence["params"]["joint_rotations"].append(output.get("pred_global_rots", None))
-            mesh_sequence["params"]["camera_t"].append(output.get("pred_cam_t", None))
-            mesh_sequence["params"]["focal_length"].append(output.get("focal_length", frame_focal))
-            mesh_sequence["params"]["body_pose"].append(output.get("body_pose_params", None))
-            mesh_sequence["params"]["hand_pose"].append(output.get("hand_pose_params", None))
-            mesh_sequence["params"]["global_rot"].append(output.get("global_rot", None))
-            mesh_sequence["params"]["shape"].append(output.get("shape_params", None))
-            mesh_sequence["params"]["scale"].append(output.get("scale_params", None))
-            
-            # 18-joint keypoints for visualization/analysis
-            kp_2d = output.get("pred_keypoints_2d", None)
-            kp_3d = output.get("pred_keypoints_3d", None)
-            
-            # Debug: Print what we're getting on first frame
-            if frame_idx == 0 or (mesh_sequence["frame_count"] == 0):
-                print(f"\n[SAM4D] ===== KEYPOINT DEBUG (Frame {frame_idx}) =====")
-                print(f"[SAM4D] pred_keypoints_2d: {type(kp_2d).__name__}", end="")
-                if kp_2d is not None:
-                    if hasattr(kp_2d, 'shape'):
-                        print(f" shape={kp_2d.shape}")
+                # Compute bbox from mask
+                bbox = self._compute_bbox_from_mask(mask_np)
+                if bbox is None:
+                    print(f"\n  Warning: No person detected in frame {frame_idx}, using previous")
+                    if len(mesh_sequence["vertices"]) > 0:
+                        # Copy previous frame's data
+                        mesh_sequence["vertices"].append(mesh_sequence["vertices"][-1].copy())
+                        for key in mesh_sequence["params"]:
+                            if len(mesh_sequence["params"][key]) > 0:
+                                mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
+                        mesh_sequence["frame_count"] += 1
+                        debug_images.append(img_np)  # Still add debug image
                     else:
-                        print(f" len={len(kp_2d) if hasattr(kp_2d, '__len__') else 'N/A'}")
-                else:
-                    print(" (None)")
+                        print(f"\n  Warning: First frame has no detection, skipping")
+                    continue
                 
-                print(f"[SAM4D] pred_keypoints_3d: {type(kp_3d).__name__}", end="")
-                if kp_3d is not None:
-                    if hasattr(kp_3d, 'shape'):
-                        print(f" shape={kp_3d.shape}")
+                # Build camera intrinsics matrix for this frame
+                # SAM3DBody expects cam_int as a [1, 3, 3] intrinsic matrix tensor (with batch dim)
+                cam_int_tensor = None
+                if camera_intrinsics is not None:
+                    # Get focal length for this frame
+                    if per_frame_focal is not None and frame_idx < len(per_frame_focal):
+                        frame_focal = per_frame_focal[frame_idx]
                     else:
-                        print(f" len={len(kp_3d) if hasattr(kp_3d, '__len__') else 'N/A'}")
+                        frame_focal = camera_intrinsics.get("focal_length", 1000.0)
+                    
+                    # Get principal point
+                    cx = camera_intrinsics.get("cx", img_np.shape[1] / 2)
+                    cy = camera_intrinsics.get("cy", img_np.shape[0] / 2)
+                    
+                    # Build 3x3 intrinsic matrix: [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+                    # For simplicity, assume fx = fy (square pixels)
+                    cam_int_matrix = np.array([
+                        [frame_focal, 0, cx],
+                        [0, frame_focal, cy],
+                        [0, 0, 1]
+                    ], dtype=np.float32)
+                    
+                    # Add batch dimension: [3, 3] -> [1, 3, 3]
+                    cam_int_tensor = torch.from_numpy(cam_int_matrix).unsqueeze(0).to(device)
                 else:
-                    print(" (None)")
+                    frame_focal = None
                 
-                jc = output.get("pred_joint_coords", None)
-                print(f"[SAM4D] pred_joint_coords: {type(jc).__name__}", end="")
-                if jc is not None:
-                    if hasattr(jc, 'shape'):
-                        print(f" shape={jc.shape}")
+                # Save to temp file (SAM3DBody requires file path)
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    cv2.imwrite(tmp.name, img_bgr)
+                    tmp_path = tmp.name
+                
+                try:
+                    # Process frame with torch.no_grad() like SAM3DBody2abc does
+                    with torch.no_grad():
+                        outputs = estimator.process_one_image(
+                            tmp_path,
+                            bboxes=bbox,
+                            masks=mask_np,
+                            bbox_thr=0.5,
+                            use_mask=True,
+                            inference_type=inference_type,
+                        )
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+                
+                if not outputs or len(outputs) == 0:
+                    print(f"\n  Warning: SAM3DBody failed on frame {frame_idx}")
+                    if len(mesh_sequence["vertices"]) > 0:
+                        # Copy previous frame's data
+                        mesh_sequence["vertices"].append(mesh_sequence["vertices"][-1].copy())
+                        for key in mesh_sequence["params"]:
+                            if mesh_sequence["params"][key]:
+                                mesh_sequence["params"][key].append(mesh_sequence["params"][key][-1])
+                        mesh_sequence["frame_count"] += 1
+                        debug_images.append(img_np)  # Still add debug image
                     else:
-                        print(f" len={len(jc) if hasattr(jc, '__len__') else 'N/A'}")
-                else:
-                    print(" (None)")
-                print(f"[SAM4D] ===========================================\n")
-            
-            mesh_sequence["params"]["keypoints_2d"].append(kp_2d)
-            mesh_sequence["params"]["keypoints_3d"].append(kp_3d)
-            
-            mesh_sequence["frame_count"] += 1
-            
-            # Debug image (just the input for now)
-            debug_images.append(img_np)
+                        print(f"\n  Warning: First frame failed, skipping")
+                    continue
+                
+                # Get the requested person (or first if not enough detected)
+                output_idx = min(person_index, len(outputs) - 1)
+                output = outputs[output_idx]
+                
+                # Add vertices to sequence
+                vertices = output.get("pred_vertices", None)
+                if vertices is not None:
+                    mesh_sequence["vertices"].append(vertices)
+                
+                # Add parameters to sequence
+                mesh_sequence["params"]["joint_coords"].append(output.get("pred_joint_coords", None))
+                mesh_sequence["params"]["joint_rotations"].append(output.get("pred_global_rots", None))
+                mesh_sequence["params"]["camera_t"].append(output.get("pred_cam_t", None))
+                mesh_sequence["params"]["focal_length"].append(output.get("focal_length", frame_focal))
+                mesh_sequence["params"]["body_pose"].append(output.get("body_pose_params", None))
+                mesh_sequence["params"]["hand_pose"].append(output.get("hand_pose_params", None))
+                mesh_sequence["params"]["global_rot"].append(output.get("global_rot", None))
+                mesh_sequence["params"]["shape"].append(output.get("shape_params", None))
+                mesh_sequence["params"]["scale"].append(output.get("scale_params", None))
+                
+                # 18-joint keypoints for visualization/analysis
+                kp_2d = output.get("pred_keypoints_2d", None)
+                kp_3d = output.get("pred_keypoints_3d", None)
+                
+                # Debug: Print what we're getting on first frame
+                if frame_idx == 0 or (mesh_sequence["frame_count"] == 0):
+                    print(f"\n[SAM4D] ===== KEYPOINT DEBUG (Frame {frame_idx}) =====")
+                    print(f"[SAM4D] pred_keypoints_2d: {type(kp_2d).__name__}", end="")
+                    if kp_2d is not None:
+                        if hasattr(kp_2d, 'shape'):
+                            print(f" shape={kp_2d.shape}")
+                        else:
+                            print(f" len={len(kp_2d) if hasattr(kp_2d, '__len__') else 'N/A'}")
+                    else:
+                        print(" (None)")
+                    
+                    print(f"[SAM4D] pred_keypoints_3d: {type(kp_3d).__name__}", end="")
+                    if kp_3d is not None:
+                        if hasattr(kp_3d, 'shape'):
+                            print(f" shape={kp_3d.shape}")
+                        else:
+                            print(f" len={len(kp_3d) if hasattr(kp_3d, '__len__') else 'N/A'}")
+                    else:
+                        print(" (None)")
+                    
+                    jc = output.get("pred_joint_coords", None)
+                    print(f"[SAM4D] pred_joint_coords: {type(jc).__name__}", end="")
+                    if jc is not None:
+                        if hasattr(jc, 'shape'):
+                            print(f" shape={jc.shape}")
+                        else:
+                            print(f" len={len(jc) if hasattr(jc, '__len__') else 'N/A'}")
+                    else:
+                        print(" (None)")
+                    print(f"[SAM4D] ===========================================\n")
+                
+                mesh_sequence["params"]["keypoints_2d"].append(kp_2d)
+                mesh_sequence["params"]["keypoints_3d"].append(kp_3d)
+                
+                mesh_sequence["frame_count"] += 1
+                
+                # Debug image (just the input for now)
+                debug_images.append(img_np)
         
         print(f"\n[SAM4DBodyCapture] Processed {mesh_sequence['frame_count']} frames successfully")
         
