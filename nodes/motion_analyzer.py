@@ -13,15 +13,18 @@ Part of the Motion Disambiguation Pipeline:
 [Motion Analyzer] → [Camera Solver] → [Motion Decoder]
 
 Joint Index Reference:
-- SAM3DBody outputs 18-joint keypoints (pred_keypoints_2d/3d)
-- Also outputs 127-joint full skeleton (pred_joint_coords)
-- This module uses 18-joint by default, 127-joint for full skeleton mode
+- pred_keypoints_2d: COCO format (17 body joints + face/hands = 70 total)
+- pred_keypoints_3d: Same COCO format
+- pred_joint_coords: SMPL-H format (22 body joints + hands = 127 total)
 """
+
+# Version for logging
+VERSION = "0.5.0-debug7"
 
 import numpy as np
 import torch
 import cv2
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Union
 from datetime import datetime, timezone, timedelta
 
 
@@ -34,47 +37,98 @@ def get_timestamp():
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 
+def to_numpy(data: Any) -> Optional[np.ndarray]:
+    """
+    Convert tensor, list, or other data to numpy array with type checking.
+    
+    Args:
+        data: Input data (torch.Tensor, np.ndarray, list, or None)
+        
+    Returns:
+        numpy array or None if input is None
+    """
+    if data is None:
+        return None
+    if isinstance(data, torch.Tensor):
+        return data.detach().cpu().numpy()
+    if isinstance(data, np.ndarray):
+        return data.copy()
+    if isinstance(data, (list, tuple)):
+        return np.array(data)
+    # Try to convert other types
+    try:
+        return np.array(data)
+    except (TypeError, ValueError):
+        return None
+
+
+def ensure_float32(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    """Ensure array is float32 for consistent processing."""
+    if arr is None:
+        return None
+    if arr.dtype != np.float32:
+        return arr.astype(np.float32)
+    return arr
+
+
 # ============================================================================
-# SAM3DBody 18-Joint Skeleton (Simple Mode)
-# This is what pred_keypoints_2d and pred_keypoints_3d use
+# COCO 17-Joint Format (pred_keypoints_2d / pred_keypoints_3d)
+# This is what SAM3DBody outputs for pred_keypoints_2d and pred_keypoints_3d
 # ============================================================================
-class SAM3DJoints:
-    """SAM3DBody 18-joint skeleton indices (pred_keypoints_2d/3d)."""
-    PELVIS = 0
-    SPINE1 = 1
-    SPINE2 = 2
-    SPINE3 = 3
-    NECK = 4
-    HEAD = 5
-    LEFT_SHOULDER = 6
+class COCOJoints:
+    """COCO 17-joint keypoint indices used by pred_keypoints_2d/3d.
+    
+    SAM3DBody outputs 70 joints total (17 COCO body + face + hands),
+    but only the first 17 are body joints.
+    """
+    NOSE = 0
+    LEFT_EYE = 1
+    RIGHT_EYE = 2
+    LEFT_EAR = 3
+    RIGHT_EAR = 4
+    LEFT_SHOULDER = 5
+    RIGHT_SHOULDER = 6
     LEFT_ELBOW = 7
-    LEFT_WRIST = 8
-    RIGHT_SHOULDER = 9
-    RIGHT_ELBOW = 10
-    RIGHT_WRIST = 11
-    LEFT_HIP = 12
+    RIGHT_ELBOW = 8
+    LEFT_WRIST = 9
+    RIGHT_WRIST = 10
+    LEFT_HIP = 11
+    RIGHT_HIP = 12
     LEFT_KNEE = 13
-    LEFT_ANKLE = 14
-    RIGHT_HIP = 15
-    RIGHT_KNEE = 16
-    RIGHT_ANKLE = 17
+    RIGHT_KNEE = 14
+    LEFT_ANKLE = 15
+    RIGHT_ANKLE = 16
     
-    NUM_JOINTS = 18
+    # Aliases for body analysis (COCO doesn't have explicit pelvis/head)
+    HEAD = NOSE          # Use nose as head proxy
+    PELVIS = LEFT_HIP    # Use left hip as pelvis proxy
     
-    # Skeleton connections for visualization
+    NUM_BODY_JOINTS = 17
+    NUM_TOTAL_JOINTS = 70  # Including face and hands
+    
+    # Skeleton connections for visualization (COCO format)
     CONNECTIONS = [
-        # Spine to head
-        (PELVIS, SPINE1), (SPINE1, SPINE2), (SPINE2, SPINE3), 
-        (SPINE3, NECK), (NECK, HEAD),
+        # Face
+        (LEFT_EYE, NOSE), (RIGHT_EYE, NOSE),
+        (LEFT_EAR, LEFT_EYE), (RIGHT_EAR, RIGHT_EYE),
+        # Shoulders
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
         # Left arm
-        (SPINE3, LEFT_SHOULDER), (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
+        (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
         # Right arm
-        (SPINE3, RIGHT_SHOULDER), (RIGHT_SHOULDER, RIGHT_ELBOW), (RIGHT_ELBOW, RIGHT_WRIST),
+        (RIGHT_SHOULDER, RIGHT_ELBOW), (RIGHT_ELBOW, RIGHT_WRIST),
+        # Torso
+        (LEFT_SHOULDER, LEFT_HIP), (RIGHT_SHOULDER, RIGHT_HIP),
+        (LEFT_HIP, RIGHT_HIP),
         # Left leg
-        (PELVIS, LEFT_HIP), (LEFT_HIP, LEFT_KNEE), (LEFT_KNEE, LEFT_ANKLE),
+        (LEFT_HIP, LEFT_KNEE), (LEFT_KNEE, LEFT_ANKLE),
         # Right leg
-        (PELVIS, RIGHT_HIP), (RIGHT_HIP, RIGHT_KNEE), (RIGHT_KNEE, RIGHT_ANKLE),
+        (RIGHT_HIP, RIGHT_KNEE), (RIGHT_KNEE, RIGHT_ANKLE),
     ]
+
+
+# Alias for backward compatibility
+SAM3DJoints = COCOJoints
 
 
 # ============================================================================
@@ -126,66 +180,51 @@ class SMPLHJoints:
     ]
 
 
-def to_numpy(data):
-    """Convert tensor or list to numpy array."""
-    if data is None:
-        return None
-    if isinstance(data, torch.Tensor):
-        return data.cpu().numpy()
-    if isinstance(data, np.ndarray):
-        return data.copy()
-    return np.array(data)
-
-
 def project_points_to_2d(
     points_3d: np.ndarray,
     focal_length: float,
     cam_t: np.ndarray,
     image_width: int,
     image_height: int,
-    coordinate_system: str = "mhr",
 ) -> np.ndarray:
     """
     Project 3D points to 2D using SAM3DBody's camera model.
+    
+    This is a FALLBACK function - prefer using pred_keypoints_2d directly
+    as it's already in correct image coordinates.
     
     Args:
         points_3d: (N, 3) array of 3D points
         focal_length: focal length in pixels
         cam_t: camera translation [tx, ty, tz]
         image_width, image_height: image dimensions
-        coordinate_system: "mhr" for keypoints_3d (18-joint), "smplh" for joint_coords (127-joint)
         
     Returns:
         points_2d: (N, 2) array of 2D points
-        
-    Note:
-        - MHR (keypoints_3d): Y-up, no negation needed
-        - SMPLH (joint_coords): Y needs negation for correct projection
     """
-    points_3d = np.array(points_3d)
-    cam_t = np.array(cam_t).flatten()
+    points_3d = ensure_float32(to_numpy(points_3d))
+    if points_3d is None:
+        return np.zeros((0, 2), dtype=np.float32)
+    
+    cam_t = np.array(cam_t, dtype=np.float32).flatten()
     
     # Camera center (principal point)
-    cx = image_width / 2.0
-    cy = image_height / 2.0
+    cx = float(image_width) / 2.0
+    cy = float(image_height) / 2.0
     
     if len(cam_t) < 3:
         # Fallback if cam_t is incomplete
         return np.column_stack([
-            np.full(len(points_3d), cx),
-            np.full(len(points_3d), cy)
+            np.full(len(points_3d), cx, dtype=np.float32),
+            np.full(len(points_3d), cy, dtype=np.float32)
         ])
     
-    tx, ty, tz = cam_t[0], cam_t[1], cam_t[2]
+    tx, ty, tz = float(cam_t[0]), float(cam_t[1]), float(cam_t[2])
     
-    # Apply camera translation
+    # SAM3DBody camera model - NO Y negation needed
     X = points_3d[:, 0] + tx
     Y = points_3d[:, 1] + ty
     Z = points_3d[:, 2] + tz
-    
-    # SMPLH coordinate system has Y inverted relative to image space
-    if coordinate_system == "smplh":
-        Y = -Y
     
     # Avoid division by zero
     Z = np.where(np.abs(Z) < 1e-6, 1e-6, Z)
@@ -194,7 +233,7 @@ def project_points_to_2d(
     x_2d = focal_length * X / Z + cx
     y_2d = focal_length * Y / Z + cy
     
-    return np.stack([x_2d, y_2d], axis=1)
+    return np.stack([x_2d, y_2d], axis=1).astype(np.float32)
 
 
 def estimate_height_from_keypoints(
@@ -376,37 +415,19 @@ def create_motion_debug_overlay(
     COLOR_PARTIAL = (0, 255, 255)    # Yellow
     COLOR_TEXT = (255, 255, 255)     # White
     
-    # Determine joint indices and connections based on 2D keypoint format
-    # Note: pred_keypoints_2d always uses 70-joint MHR format (body joints 0-17)
-    # joint_coords uses 127-joint SMPLH format (body joints 0-21)
-    joints_2d_format = subject_motion.get("joints_2d_format", "keypoints_2d")
-    
-    if joints_2d_format == "joint_coords":
-        # 127-joint SMPLH format - use first 22 body joints
-        BODY_JOINTS = list(range(22))
-        SKELETON_CONNECTIONS = SMPLHJoints.CONNECTIONS
-        SPECIAL_JOINTS = {
-            SMPLHJoints.PELVIS: (COLOR_PELVIS, 8),
-            SMPLHJoints.HEAD: (COLOR_HEAD, 6),
-            SMPLHJoints.LEFT_WRIST: (COLOR_HANDS, 5),
-            SMPLHJoints.RIGHT_WRIST: (COLOR_HANDS, 5),
-            SMPLHJoints.LEFT_ANKLE: (COLOR_FEET, 5),
-            SMPLHJoints.RIGHT_ANKLE: (COLOR_FEET, 5),
-            SMPLHJoints.LEFT_FOOT: (COLOR_FEET, 4),
-            SMPLHJoints.RIGHT_FOOT: (COLOR_FEET, 4),
-        }
-    else:
-        # 70-joint MHR format (from pred_keypoints_2d) - body joints 0-17
-        BODY_JOINTS = list(range(18))
-        SKELETON_CONNECTIONS = SAM3DJoints.CONNECTIONS
-        SPECIAL_JOINTS = {
-            SAM3DJoints.PELVIS: (COLOR_PELVIS, 8),
-            SAM3DJoints.HEAD: (COLOR_HEAD, 6),
-            SAM3DJoints.LEFT_WRIST: (COLOR_HANDS, 5),
-            SAM3DJoints.RIGHT_WRIST: (COLOR_HANDS, 5),
-            SAM3DJoints.LEFT_ANKLE: (COLOR_FEET, 5),
-            SAM3DJoints.RIGHT_ANKLE: (COLOR_FEET, 5),
-        }
+    # Determine joint indices and connections for 2D visualization
+    # Note: We ALWAYS use pred_keypoints_2d which is COCO format (17 body joints)
+    # regardless of the 3D analysis mode selected
+    BODY_JOINTS = list(range(COCOJoints.NUM_BODY_JOINTS))  # 0-16
+    SKELETON_CONNECTIONS = COCOJoints.CONNECTIONS
+    SPECIAL_JOINTS = {
+        COCOJoints.PELVIS: (COLOR_PELVIS, 8),      # Left hip as pelvis proxy
+        COCOJoints.HEAD: (COLOR_HEAD, 6),          # Nose as head proxy
+        COCOJoints.LEFT_WRIST: (COLOR_HANDS, 5),
+        COCOJoints.RIGHT_WRIST: (COLOR_HANDS, 5),
+        COCOJoints.LEFT_ANKLE: (COLOR_FEET, 5),
+        COCOJoints.RIGHT_ANKLE: (COLOR_FEET, 5),
+    }
     
     for i in range(num_frames):
         frame = output[i]
@@ -455,11 +476,13 @@ def create_motion_debug_overlay(
         y_offset = 30
         line_height = 25
         
-        # Skeleton info
-        if joints_2d_format == "joint_coords":
-            skeleton_name = "Full (SMPLH 22)"
+        # Skeleton info - show the mode selected by user
+        skeleton_mode_val = subject_motion.get("skeleton_mode", "Simple Skeleton")
+        kp_source = subject_motion.get("keypoint_source", "keypoints_3d")
+        if kp_source == "joint_coords":
+            skeleton_name = "Full (SMPLH 127)"
         else:
-            skeleton_name = "Simple (MHR 18)"
+            skeleton_name = "Simple (COCO 17)"
         cv2.putText(frame, f"Skeleton: {skeleton_name}", (10, y_offset),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 2)
         y_offset += line_height
@@ -601,7 +624,7 @@ class SAM4DMotionAnalyzer:
         """
         Analyze subject motion from mesh sequence.
         """
-        print(f"\n[{get_timestamp()}] [Motion Analyzer] ========== SUBJECT MOTION ANALYSIS ==========")
+        print(f"\n[{get_timestamp()}] [Motion Analyzer v{VERSION}] ========== SUBJECT MOTION ANALYSIS ==========")
         
         # Determine skeleton mode
         use_simple = skeleton_mode == "Simple Skeleton"
@@ -731,17 +754,29 @@ class SAM4DMotionAnalyzer:
         print(f"[{get_timestamp()}] [Motion Analyzer] Torso+head: {kp_height_info['torso_head_length']:.3f} units")
         
         # ===== PER-FRAME ANALYSIS =====
-        # Get joint indices based on mode
+        # IMPORTANT: We use TWO sets of joint indices:
+        # - 2D indices (COCO format): For pred_keypoints_2d visualization
+        # - 3D indices (COCO or SMPLH): For 3D analysis based on kp_source
+        
+        # 2D indices - ALWAYS COCO format (pred_keypoints_2d)
+        pelvis_idx_2d = COCOJoints.PELVIS      # 11 (left hip as proxy)
+        head_idx_2d = COCOJoints.HEAD          # 0 (nose)
+        left_ankle_idx_2d = COCOJoints.LEFT_ANKLE   # 15
+        right_ankle_idx_2d = COCOJoints.RIGHT_ANKLE  # 16
+        
+        # 3D indices - depends on kp_source
         if kp_source == "keypoints_3d":
-            pelvis_idx = SAM3DJoints.PELVIS
-            head_idx = SAM3DJoints.HEAD
-            left_ankle_idx = SAM3DJoints.LEFT_ANKLE
-            right_ankle_idx = SAM3DJoints.RIGHT_ANKLE
+            # COCO format for pred_keypoints_3d
+            pelvis_idx_3d = COCOJoints.PELVIS
+            head_idx_3d = COCOJoints.HEAD
+            left_ankle_idx_3d = COCOJoints.LEFT_ANKLE
+            right_ankle_idx_3d = COCOJoints.RIGHT_ANKLE
         else:
-            pelvis_idx = SMPLHJoints.PELVIS
-            head_idx = SMPLHJoints.HEAD
-            left_ankle_idx = SMPLHJoints.LEFT_ANKLE
-            right_ankle_idx = SMPLHJoints.RIGHT_ANKLE
+            # SMPLH format for joint_coords
+            pelvis_idx_3d = SMPLHJoints.PELVIS
+            head_idx_3d = SMPLHJoints.HEAD
+            left_ankle_idx_3d = SMPLHJoints.LEFT_ANKLE
+            right_ankle_idx_3d = SMPLHJoints.RIGHT_ANKLE
         
         subject_motion = {
             "pelvis_2d": [],
@@ -760,6 +795,7 @@ class SAM4DMotionAnalyzer:
             "scale_factor": scale_factor,
             "skeleton_mode": skeleton_mode,
             "keypoint_source": kp_source,
+            "joints_2d_format": "keypoints_2d",  # ALWAYS COCO format for 2D
         }
         
         # Initialize ground level tracking for foot contact detection
@@ -795,72 +831,67 @@ class SAM4DMotionAnalyzer:
             if keypoints_3d.ndim == 3:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
-            # Get 2D keypoints based on skeleton mode:
-            # - Full Skeleton (joint_coords): Project 127-joint 3D to 2D
-            # - Simple Skeleton (keypoints_3d): Use pred_keypoints_2d directly (70-joint MHR)
-            if kp_source == "joint_coords":
-                # Full Skeleton mode: project joint_coords (127 joints) to 2D
-                # SMPLH format requires Y negation for correct projection
-                joints_2d = project_points_to_2d(
-                    keypoints_3d, focal, camera_t, image_size[0], image_size[1],
-                    coordinate_system="smplh"
-                )
-                joints_2d_format = "joint_coords"  # 127-joint SMPLH format
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING joint_coords to 2D (shape={joints_2d.shape})")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}") 
-            elif has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
-                # Simple Skeleton mode: use pred_keypoints_2d directly (70-joint MHR)
+            # ===== 2D KEYPOINTS =====
+            # ALWAYS use pred_keypoints_2d directly - it's already in correct image coordinates
+            # This is the KEY FIX: Never project joint_coords to 2D!
+            if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
                 keypoints_2d = to_numpy(keypoints_2d_list[i])
-                if keypoints_2d.ndim == 3:
-                    keypoints_2d = keypoints_2d.squeeze(0)
-                # Take only x,y (might have confidence as 3rd column)
-                if keypoints_2d.shape[1] >= 2:
-                    joints_2d = keypoints_2d[:, :2]
+                if keypoints_2d is not None:
+                    if keypoints_2d.ndim == 3:
+                        keypoints_2d = keypoints_2d.squeeze(0)
+                    # Ensure float32 and take only x,y
+                    keypoints_2d = ensure_float32(keypoints_2d)
+                    if keypoints_2d.shape[1] >= 2:
+                        joints_2d = keypoints_2d[:, :2]
+                    else:
+                        joints_2d = keypoints_2d
+                    if i == 0:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
                 else:
-                    joints_2d = keypoints_2d
-                joints_2d_format = "keypoints_2d"  # 70-joint MHR format
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
+                    # Fallback if conversion failed
+                    joints_2d = np.zeros((COCOJoints.NUM_BODY_JOINTS, 2), dtype=np.float32)
             else:
-                # Fallback: project 3D to 2D
-                coord_sys = "smplh" if kp_source == "joint_coords" else "mhr"
-                joints_2d = project_points_to_2d(
-                    keypoints_3d, focal, camera_t, image_size[0], image_size[1],
-                    coordinate_system=coord_sys
-                )
-                joints_2d_format = kp_source
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING 3D→2D fallback (shape={joints_2d.shape})")
-            
-            # Store the 2D format on first frame
-            if i == 0:
-                subject_motion["joints_2d_format"] = joints_2d_format
+                # Fallback: project keypoints_3d to 2D (NOT joint_coords!)
+                if has_kp_3d and i < len(keypoints_3d_list) and keypoints_3d_list[i] is not None:
+                    kp3d_for_projection = to_numpy(keypoints_3d_list[i])
+                    if kp3d_for_projection is not None:
+                        if kp3d_for_projection.ndim == 3:
+                            kp3d_for_projection = kp3d_for_projection.squeeze(0)
+                        joints_2d = project_points_to_2d(
+                            kp3d_for_projection, focal, camera_t, image_size[0], image_size[1]
+                        )
+                        if i == 0:
+                            print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING keypoints_3d→2D fallback (shape={joints_2d.shape})")
+                    else:
+                        joints_2d = np.zeros((COCOJoints.NUM_BODY_JOINTS, 2), dtype=np.float32)
+                else:
+                    joints_2d = np.zeros((COCOJoints.NUM_BODY_JOINTS, 2), dtype=np.float32)
+                    if i == 0:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: No 2D data available, using zeros")
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
             
-            # Pelvis position - use pelvis_idx (0 for both formats)
-            pelvis_2d = joints_2d[pelvis_idx] if len(joints_2d) > pelvis_idx else np.array([0, 0])
-            pelvis_3d = keypoints_3d[pelvis_idx] * scale_factor if len(keypoints_3d) > pelvis_idx else np.zeros(3)
+            # Pelvis position - use COCO indices for 2D, appropriate indices for 3D
+            pelvis_2d = joints_2d[pelvis_idx_2d] if len(joints_2d) > pelvis_idx_2d else np.array([0, 0], dtype=np.float32)
+            pelvis_3d = keypoints_3d[pelvis_idx_3d] * scale_factor if len(keypoints_3d) > pelvis_idx_3d else np.zeros(3, dtype=np.float32)
             
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
-            # Apparent height (pixels) - use correct joint indices for skeleton mode
-            min_joints_for_height = max(head_idx, left_ankle_idx, right_ankle_idx) + 1
+            # Apparent height (pixels) - use COCO indices for 2D positions
+            min_joints_for_height = max(head_idx_2d, left_ankle_idx_2d, right_ankle_idx_2d) + 1
             if len(joints_2d) >= min_joints_for_height:
-                head_y = joints_2d[head_idx][1]  # Head
-                left_ankle_y_2d = joints_2d[left_ankle_idx][1]  # Left ankle
-                right_ankle_y_2d = joints_2d[right_ankle_idx][1]  # Right ankle
+                head_y = joints_2d[head_idx_2d][1]  # Head (nose in COCO)
+                left_ankle_y_2d = joints_2d[left_ankle_idx_2d][1]  # Left ankle
+                right_ankle_y_2d = joints_2d[right_ankle_idx_2d][1]  # Right ankle
                 feet_y = max(left_ankle_y_2d, right_ankle_y_2d)
                 apparent_height = abs(feet_y - head_y)
             elif vertices is not None:
-                # Fallback: use mesh bounding box (vertices are in SMPLH coordinate system)
+                # Fallback: use mesh bounding box
                 mesh_2d = project_points_to_2d(
-                    vertices, focal, camera_t, image_size[0], image_size[1],
-                    coordinate_system="smplh"
+                    vertices, focal, camera_t, image_size[0], image_size[1]
                 )
                 mesh_min_y = mesh_2d[:, 1].min()
                 mesh_max_y = mesh_2d[:, 1].max()
@@ -873,13 +904,12 @@ class SAM4DMotionAnalyzer:
             depth_m = camera_t[2] * scale_factor
             subject_motion["depth_estimate"].append(depth_m)
             
-            # Foot contact detection using ankle joint Y positions
-            # Compare against reference ground level (lowest seen across all frames)
-            # Use the correct indices based on skeleton mode (set at start of function)
-            min_joints_needed = max(left_ankle_idx, right_ankle_idx) + 1
+            # Foot contact detection using 3D ankle positions
+            # Use the correct indices based on kp_source (COCO or SMPLH)
+            min_joints_needed = max(left_ankle_idx_3d, right_ankle_idx_3d) + 1
             if len(keypoints_3d) >= min_joints_needed:
-                left_ankle_y = keypoints_3d[left_ankle_idx][1]   # Left ankle Y
-                right_ankle_y = keypoints_3d[right_ankle_idx][1]  # Right ankle Y
+                left_ankle_y = keypoints_3d[left_ankle_idx_3d][1]   # Left ankle Y
+                right_ankle_y = keypoints_3d[right_ankle_idx_3d][1]  # Right ankle Y
                 
                 # Initialize or update ground level estimate (lowest seen)
                 current_lowest = min(left_ankle_y, right_ankle_y)

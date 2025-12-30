@@ -9,6 +9,9 @@ Provides integrated SAM3DBody nodes with:
 - Temporal smoothing for smooth animation sequences
 """
 
+# Version for logging
+VERSION = "0.5.0-debug7"
+
 import os
 import sys
 import tempfile
@@ -348,7 +351,7 @@ class SAM4DBodyBatchProcess:
             print(f"[SAM4DBodyCapture] Warning: Could not get faces from model: {e}")
             faces = None
         
-        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Using device: {device}")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture v{VERSION}] Using device: {device}")
         
         # Create estimator
         estimator = SAM3DBodyEstimator(
