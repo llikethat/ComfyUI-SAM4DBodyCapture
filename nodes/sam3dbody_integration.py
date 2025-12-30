@@ -216,61 +216,6 @@ class SAM4DBodyLoader:
         model = model.to(device)
         model.eval()
         
-        # === AGGRESSIVE FIX: Convert MHR model to float16 to fix sparse ops ===
-        if force_fp16:
-            try:
-                # The MHR TorchScript model has bfloat16 tensors baked in
-                # We need to convert them to float16 after loading
-                if hasattr(model, 'head_pose') and hasattr(model.head_pose, 'mhr'):
-                    mhr_model = model.head_pose.mhr
-                    
-                    # Method 1: Try direct dtype conversion on TorchScript model
-                    try:
-                        # Check if we can convert the whole model
-                        original_device = next(mhr_model.parameters()).device
-                        mhr_model_fp16 = mhr_model.to(dtype=torch.float16, device=original_device)
-                        model.head_pose.mhr = mhr_model_fp16
-                        print(f"[SAM4DBodyCapture] Converted MHR model to float16 via .to()")
-                    except Exception as e:
-                        print(f"[SAM4DBodyCapture] Method 1 failed: {e}")
-                        
-                        # Method 2: Convert individual parameters
-                        converted = 0
-                        for name, param in mhr_model.named_parameters():
-                            if param.dtype == torch.bfloat16:
-                                param.data = param.data.to(torch.float16)
-                                converted += 1
-                        
-                        # Also convert buffers (non-trainable tensors)
-                        for name, buf in mhr_model.named_buffers():
-                            if buf.dtype == torch.bfloat16:
-                                converted += 1
-                        
-                        if converted > 0:
-                            print(f"[SAM4DBodyCapture] Found {converted} bfloat16 tensors in MHR model")
-                        else:
-                            print(f"[SAM4DBodyCapture] No bfloat16 tensors found in MHR parameters")
-                    
-                    # Method 3: Convert the whole SAM3DBody model
-                    try:
-                        # Convert the entire model, which should propagate to MHR
-                        def convert_bfloat16_to_float16(m):
-                            for param in m.parameters():
-                                if param.data.dtype == torch.bfloat16:
-                                    param.data = param.data.to(torch.float16)
-                            for buf_name, buf in m.named_buffers():
-                                if buf.dtype == torch.bfloat16:
-                                    m._buffers[buf_name.split('.')[-1]] = buf.to(torch.float16)
-                        
-                        model.apply(convert_bfloat16_to_float16)
-                        print(f"[SAM4DBodyCapture] Applied bfloat16→float16 conversion to all model params")
-                    except Exception as e:
-                        print(f"[SAM4DBodyCapture] Method 3 failed: {e}")
-                        
-            except Exception as e:
-                print(f"[SAM4DBodyCapture] Warning: Could not convert MHR model: {e}")
-                print(f"[SAM4DBodyCapture] The BFloat16 error may still occur. Try restarting ComfyUI.")
-        
         # Create model dict
         model_dict = {
             "model": model,
@@ -487,19 +432,16 @@ class SAM4DBodyBatchProcess:
                 tmp_path = tmp.name
             
             try:
-                # Process frame 
-                # Note: SAM3DBody2abc doesn't pass cam_int, and it works
-                # Wrap in autocast to force float16 (fixes BFloat16 sparse error)
-                with torch.cuda.amp.autocast(enabled=True, dtype=torch.float16):
-                    outputs = estimator.process_one_image(
-                        tmp_path,
-                        bboxes=bbox,
-                        masks=mask_np,
-                        # cam_int removed - causes issues and SAM3DBody2abc doesn't use it
-                        bbox_thr=0.5,
-                        use_mask=True,
-                        inference_type=inference_type,
-                    )
+                # Process frame with camera intrinsics
+                outputs = estimator.process_one_image(
+                    tmp_path,
+                    bboxes=bbox,
+                    masks=mask_np,
+                    cam_int=cam_int_tensor,  # Pass camera intrinsics!
+                    bbox_thr=0.5,
+                    use_mask=True,
+                    inference_type=inference_type,
+                )
             finally:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
@@ -537,45 +479,9 @@ class SAM4DBodyBatchProcess:
             mesh_sequence["params"]["global_rot"].append(output.get("global_rot", None))
             mesh_sequence["params"]["shape"].append(output.get("shape_params", None))
             mesh_sequence["params"]["scale"].append(output.get("scale_params", None))
-            
             # 18-joint keypoints for visualization/analysis
-            kp_2d = output.get("pred_keypoints_2d", None)
-            kp_3d = output.get("pred_keypoints_3d", None)
-            
-            # Debug: Print what we're getting on first frame
-            if frame_idx == 0 or (mesh_sequence["frame_count"] == 0):
-                print(f"\n[SAM4D] ===== KEYPOINT DEBUG (Frame {frame_idx}) =====")
-                print(f"[SAM4D] pred_keypoints_2d: {type(kp_2d).__name__}", end="")
-                if kp_2d is not None:
-                    if hasattr(kp_2d, 'shape'):
-                        print(f" shape={kp_2d.shape}")
-                    else:
-                        print(f" len={len(kp_2d) if hasattr(kp_2d, '__len__') else 'N/A'}")
-                else:
-                    print(" (None)")
-                
-                print(f"[SAM4D] pred_keypoints_3d: {type(kp_3d).__name__}", end="")
-                if kp_3d is not None:
-                    if hasattr(kp_3d, 'shape'):
-                        print(f" shape={kp_3d.shape}")
-                    else:
-                        print(f" len={len(kp_3d) if hasattr(kp_3d, '__len__') else 'N/A'}")
-                else:
-                    print(" (None)")
-                
-                jc = output.get("pred_joint_coords", None)
-                print(f"[SAM4D] pred_joint_coords: {type(jc).__name__}", end="")
-                if jc is not None:
-                    if hasattr(jc, 'shape'):
-                        print(f" shape={jc.shape}")
-                    else:
-                        print(f" len={len(jc) if hasattr(jc, '__len__') else 'N/A'}")
-                else:
-                    print(" (None)")
-                print(f"[SAM4D] ===========================================\n")
-            
-            mesh_sequence["params"]["keypoints_2d"].append(kp_2d)
-            mesh_sequence["params"]["keypoints_3d"].append(kp_3d)
+            mesh_sequence["params"]["keypoints_2d"].append(output.get("pred_keypoints_2d", None))
+            mesh_sequence["params"]["keypoints_3d"].append(output.get("pred_keypoints_3d", None))
             
             mesh_sequence["frame_count"] += 1
             
