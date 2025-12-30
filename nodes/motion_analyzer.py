@@ -28,45 +28,60 @@ from typing import Dict, List, Optional, Tuple, Any
 
 
 # ============================================================================
-# SAM3DBody 18-Joint Skeleton (Simple Mode)
-# This is what pred_keypoints_2d and pred_keypoints_3d use
+# SAM3DBody pred_keypoints_2d/3d Format (COCO-based 70-joint)
+# The first 17 joints follow COCO keypoint ordering
 # ============================================================================
 class SAM3DJoints:
-    """SAM3DBody 18-joint skeleton indices (pred_keypoints_2d/3d)."""
-    PELVIS = 0
-    SPINE1 = 1
-    SPINE2 = 2
-    SPINE3 = 3
-    NECK = 4
-    HEAD = 5
-    LEFT_SHOULDER = 6
+    """SAM3DBody keypoint indices for pred_keypoints_2d/3d.
+    
+    The first 17 joints follow COCO keypoint ordering.
+    Total 70 joints (17 body + face + hands).
+    """
+    # COCO format (first 17 joints)
+    NOSE = 0
+    LEFT_EYE = 1
+    RIGHT_EYE = 2
+    LEFT_EAR = 3
+    RIGHT_EAR = 4
+    LEFT_SHOULDER = 5
+    RIGHT_SHOULDER = 6
     LEFT_ELBOW = 7
-    LEFT_WRIST = 8
-    RIGHT_SHOULDER = 9
-    RIGHT_ELBOW = 10
-    RIGHT_WRIST = 11
-    LEFT_HIP = 12
+    RIGHT_ELBOW = 8
+    LEFT_WRIST = 9
+    RIGHT_WRIST = 10
+    LEFT_HIP = 11
+    RIGHT_HIP = 12
     LEFT_KNEE = 13
-    LEFT_ANKLE = 14
-    RIGHT_HIP = 15
-    RIGHT_KNEE = 16
-    RIGHT_ANKLE = 17
+    RIGHT_KNEE = 14
+    LEFT_ANKLE = 15
+    RIGHT_ANKLE = 16
     
-    NUM_JOINTS = 18
+    # Aliases for body analysis (COCO doesn't have explicit pelvis)
+    HEAD = NOSE          # Use nose as head proxy
+    PELVIS = LEFT_HIP    # Use left hip as pelvis proxy
+    NECK = NOSE          # Use nose as neck proxy (no explicit neck)
     
-    # Skeleton connections for visualization
+    NUM_JOINTS = 17      # Core body joints
+    NUM_TOTAL = 70       # Including face and hands
+    
+    # Skeleton connections for visualization (COCO format)
     CONNECTIONS = [
-        # Spine to head
-        (PELVIS, SPINE1), (SPINE1, SPINE2), (SPINE2, SPINE3), 
-        (SPINE3, NECK), (NECK, HEAD),
+        # Face
+        (LEFT_EYE, NOSE), (RIGHT_EYE, NOSE),
+        (LEFT_EAR, LEFT_EYE), (RIGHT_EAR, RIGHT_EYE),
+        # Shoulders
+        (LEFT_SHOULDER, RIGHT_SHOULDER),
         # Left arm
-        (SPINE3, LEFT_SHOULDER), (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
+        (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
         # Right arm
-        (SPINE3, RIGHT_SHOULDER), (RIGHT_SHOULDER, RIGHT_ELBOW), (RIGHT_ELBOW, RIGHT_WRIST),
+        (RIGHT_SHOULDER, RIGHT_ELBOW), (RIGHT_ELBOW, RIGHT_WRIST),
+        # Torso
+        (LEFT_SHOULDER, LEFT_HIP), (RIGHT_SHOULDER, RIGHT_HIP),
+        (LEFT_HIP, RIGHT_HIP),
         # Left leg
-        (PELVIS, LEFT_HIP), (LEFT_HIP, LEFT_KNEE), (LEFT_KNEE, LEFT_ANKLE),
+        (LEFT_HIP, LEFT_KNEE), (LEFT_KNEE, LEFT_ANKLE),
         # Right leg
-        (PELVIS, RIGHT_HIP), (RIGHT_HIP, RIGHT_KNEE), (RIGHT_KNEE, RIGHT_ANKLE),
+        (RIGHT_HIP, RIGHT_KNEE), (RIGHT_KNEE, RIGHT_ANKLE),
     ]
 
 
@@ -364,21 +379,14 @@ def create_motion_debug_overlay(
     COLOR_PARTIAL = (0, 255, 255)    # Yellow
     COLOR_TEXT = (255, 255, 255)     # White
     
-    # Get joint indices based on mode
-    if skeleton_mode == "simple":
-        pelvis_idx = SAM3DJoints.PELVIS
-        head_idx = SAM3DJoints.HEAD
-        left_wrist_idx = SAM3DJoints.LEFT_WRIST
-        right_wrist_idx = SAM3DJoints.RIGHT_WRIST
-        left_ankle_idx = SAM3DJoints.LEFT_ANKLE
-        right_ankle_idx = SAM3DJoints.RIGHT_ANKLE
-    else:
-        pelvis_idx = SMPLHJoints.PELVIS
-        head_idx = SMPLHJoints.HEAD
-        left_wrist_idx = SMPLHJoints.LEFT_WRIST
-        right_wrist_idx = SMPLHJoints.RIGHT_WRIST
-        left_ankle_idx = SMPLHJoints.LEFT_ANKLE
-        right_ankle_idx = SMPLHJoints.RIGHT_ANKLE
+    # ALWAYS use COCO indices for 2D visualization
+    # because joints_2d always comes from pred_keypoints_2d (COCO format)
+    pelvis_idx = SAM3DJoints.PELVIS      # 11 (left hip)
+    head_idx = SAM3DJoints.HEAD          # 0 (nose)
+    left_wrist_idx = SAM3DJoints.LEFT_WRIST   # 9
+    right_wrist_idx = SAM3DJoints.RIGHT_WRIST  # 10
+    left_ankle_idx = SAM3DJoints.LEFT_ANKLE   # 15
+    right_ankle_idx = SAM3DJoints.RIGHT_ANKLE  # 16
     
     # Special joint indices for coloring
     special_joints = {
@@ -400,18 +408,25 @@ def create_motion_debug_overlay(
             
             # Draw joint dots only (no skeleton lines)
             # Lines are removed because joints have independent translational data
+            # Only draw body joints (first 17 in COCO format)
             if show_skeleton:
-                for j, pt in enumerate(joints_2d_frame):
-                    if pt is not None:
+                num_body_joints = min(SAM3DJoints.NUM_JOINTS, len(joints_2d_frame))
+                for j in range(num_body_joints):
+                    pt = joints_2d_frame[j]
+                    if pt is not None and len(pt) >= 2:
+                        x, y = int(pt[0]), int(pt[1])
+                        # Skip invalid coordinates
+                        if x < 0 or y < 0 or x > 10000 or y > 10000:
+                            continue
                         # Use special color/size for key joints
                         if j in special_joints:
                             color, radius = special_joints[j]
                         else:
                             color = COLOR_JOINTS
                             radius = 4
-                        cv2.circle(frame, (int(pt[0]), int(pt[1])), radius, color, -1)
+                        cv2.circle(frame, (x, y), radius, color, -1)
                         # Add black outline for visibility
-                        cv2.circle(frame, (int(pt[0]), int(pt[1])), radius, (0, 0, 0), 1)
+                        cv2.circle(frame, (x, y), radius, (0, 0, 0), 1)
         
         # Draw pelvis position with larger black outline
         pelvis_2d = subject_motion.get("pelvis_2d")
@@ -680,17 +695,30 @@ class SAM4DMotionAnalyzer:
         print(f"[Motion Analyzer] Torso+head: {kp_height_info['torso_head_length']:.3f} units")
         
         # ===== PER-FRAME ANALYSIS =====
-        # Get joint indices based on mode
+        # ===== JOINT INDICES =====
+        # CRITICAL: We use TWO separate sets of indices:
+        # 1. 2D indices: ALWAYS COCO format (for pred_keypoints_2d visualization)
+        # 2. 3D indices: COCO or SMPLH depending on kp_source (for analysis)
+        
+        # 2D indices - ALWAYS COCO format (pred_keypoints_2d)
+        pelvis_idx_2d = SAM3DJoints.PELVIS      # 11 (left hip)
+        head_idx_2d = SAM3DJoints.HEAD          # 0 (nose)
+        left_ankle_idx_2d = SAM3DJoints.LEFT_ANKLE   # 15
+        right_ankle_idx_2d = SAM3DJoints.RIGHT_ANKLE  # 16
+        
+        # 3D indices - depends on kp_source
         if kp_source == "keypoints_3d":
-            pelvis_idx = SAM3DJoints.PELVIS
-            head_idx = SAM3DJoints.HEAD
-            left_ankle_idx = SAM3DJoints.LEFT_ANKLE
-            right_ankle_idx = SAM3DJoints.RIGHT_ANKLE
+            # COCO format for pred_keypoints_3d
+            pelvis_idx_3d = SAM3DJoints.PELVIS
+            head_idx_3d = SAM3DJoints.HEAD
+            left_ankle_idx_3d = SAM3DJoints.LEFT_ANKLE
+            right_ankle_idx_3d = SAM3DJoints.RIGHT_ANKLE
         else:
-            pelvis_idx = SMPLHJoints.PELVIS
-            head_idx = SMPLHJoints.HEAD
-            left_ankle_idx = SMPLHJoints.LEFT_ANKLE
-            right_ankle_idx = SMPLHJoints.RIGHT_ANKLE
+            # SMPLH format for joint_coords
+            pelvis_idx_3d = SMPLHJoints.PELVIS
+            head_idx_3d = SMPLHJoints.HEAD
+            left_ankle_idx_3d = SMPLHJoints.LEFT_ANKLE
+            right_ankle_idx_3d = SMPLHJoints.RIGHT_ANKLE
         
         subject_motion = {
             "pelvis_2d": [],
@@ -760,16 +788,16 @@ class SAM4DMotionAnalyzer:
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
             
-            # Pelvis position
-            pelvis_3d = keypoints_3d[pelvis_idx] * scale_factor
-            pelvis_2d = joints_2d[pelvis_idx]
+            # Pelvis position - use 2D indices for 2D, 3D indices for 3D
+            pelvis_3d = keypoints_3d[pelvis_idx_3d] * scale_factor
+            pelvis_2d = joints_2d[pelvis_idx_2d]
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
-            # Apparent height (pixels)
-            head_2d = joints_2d[head_idx]
-            left_ankle_2d = joints_2d[left_ankle_idx]
-            right_ankle_2d = joints_2d[right_ankle_idx]
+            # Apparent height (pixels) - use 2D indices
+            head_2d = joints_2d[head_idx_2d]
+            left_ankle_2d = joints_2d[left_ankle_idx_2d]
+            right_ankle_2d = joints_2d[right_ankle_idx_2d]
             feet_y = max(left_ankle_2d[1], right_ankle_2d[1])
             apparent_height = abs(feet_y - head_2d[1])
             subject_motion["apparent_height"].append(apparent_height)
@@ -778,7 +806,7 @@ class SAM4DMotionAnalyzer:
             depth_m = camera_t[2] * scale_factor
             subject_motion["depth_estimate"].append(depth_m)
             
-            # Foot contact detection
+            # Foot contact detection - use 3D indices on 3D data
             skeleton_mode_str = "simple" if kp_source == "keypoints_3d" else "full"
             foot_contact = detect_foot_contact(
                 keypoints_3d, vertices, skeleton_mode_str, foot_contact_threshold
