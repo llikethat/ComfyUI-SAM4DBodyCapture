@@ -13,122 +13,58 @@ Part of the Motion Disambiguation Pipeline:
 [Motion Analyzer] → [Camera Solver] → [Motion Decoder]
 
 Joint Index Reference:
-- pred_keypoints_2d: COCO format (17 body joints + face/hands = 70 total)
-- pred_keypoints_3d: Same COCO format
-- pred_joint_coords: SMPL-H format (22 body joints + hands = 127 total)
+- SAM3DBody outputs 18-joint keypoints (pred_keypoints_2d/3d)
+- Also outputs 127-joint full skeleton (pred_joint_coords)
+- This module uses 18-joint by default, 127-joint for full skeleton mode
 """
-
-# Version for logging
-VERSION = "0.5.0-debug7"
 
 import numpy as np
 import torch
 import cv2
-from typing import Dict, List, Optional, Tuple, Any, Union
-from datetime import datetime, timezone, timedelta
-
-
-# IST timezone (UTC+5:30)
-IST = timezone(timedelta(hours=5, minutes=30))
-
-
-def get_timestamp():
-    """Get current timestamp in IST (UTC+5:30) format."""
-    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
-
-
-def to_numpy(data: Any) -> Optional[np.ndarray]:
-    """
-    Convert tensor, list, or other data to numpy array with type checking.
-    
-    Args:
-        data: Input data (torch.Tensor, np.ndarray, list, or None)
-        
-    Returns:
-        numpy array or None if input is None
-    """
-    if data is None:
-        return None
-    if isinstance(data, torch.Tensor):
-        return data.detach().cpu().numpy()
-    if isinstance(data, np.ndarray):
-        return data.copy()
-    if isinstance(data, (list, tuple)):
-        return np.array(data)
-    # Try to convert other types
-    try:
-        return np.array(data)
-    except (TypeError, ValueError):
-        return None
-
-
-def ensure_float32(arr: Optional[np.ndarray]) -> Optional[np.ndarray]:
-    """Ensure array is float32 for consistent processing."""
-    if arr is None:
-        return None
-    if arr.dtype != np.float32:
-        return arr.astype(np.float32)
-    return arr
+from typing import Dict, List, Optional, Tuple, Any
 
 
 # ============================================================================
-# COCO 17-Joint Format (pred_keypoints_2d / pred_keypoints_3d)
-# This is what SAM3DBody outputs for pred_keypoints_2d and pred_keypoints_3d
+# SAM3DBody 18-Joint Skeleton (Simple Mode)
+# This is what pred_keypoints_2d and pred_keypoints_3d use
 # ============================================================================
-class COCOJoints:
-    """COCO 17-joint keypoint indices used by pred_keypoints_2d/3d.
-    
-    SAM3DBody outputs 70 joints total (17 COCO body + face + hands),
-    but only the first 17 are body joints.
-    """
-    NOSE = 0
-    LEFT_EYE = 1
-    RIGHT_EYE = 2
-    LEFT_EAR = 3
-    RIGHT_EAR = 4
-    LEFT_SHOULDER = 5
-    RIGHT_SHOULDER = 6
+class SAM3DJoints:
+    """SAM3DBody 18-joint skeleton indices (pred_keypoints_2d/3d)."""
+    PELVIS = 0
+    SPINE1 = 1
+    SPINE2 = 2
+    SPINE3 = 3
+    NECK = 4
+    HEAD = 5
+    LEFT_SHOULDER = 6
     LEFT_ELBOW = 7
-    RIGHT_ELBOW = 8
-    LEFT_WRIST = 9
-    RIGHT_WRIST = 10
-    LEFT_HIP = 11
-    RIGHT_HIP = 12
+    LEFT_WRIST = 8
+    RIGHT_SHOULDER = 9
+    RIGHT_ELBOW = 10
+    RIGHT_WRIST = 11
+    LEFT_HIP = 12
     LEFT_KNEE = 13
-    RIGHT_KNEE = 14
-    LEFT_ANKLE = 15
-    RIGHT_ANKLE = 16
+    LEFT_ANKLE = 14
+    RIGHT_HIP = 15
+    RIGHT_KNEE = 16
+    RIGHT_ANKLE = 17
     
-    # Aliases for body analysis (COCO doesn't have explicit pelvis/head)
-    HEAD = NOSE          # Use nose as head proxy
-    PELVIS = LEFT_HIP    # Use left hip as pelvis proxy
+    NUM_JOINTS = 18
     
-    NUM_BODY_JOINTS = 17
-    NUM_TOTAL_JOINTS = 70  # Including face and hands
-    
-    # Skeleton connections for visualization (COCO format)
+    # Skeleton connections for visualization
     CONNECTIONS = [
-        # Face
-        (LEFT_EYE, NOSE), (RIGHT_EYE, NOSE),
-        (LEFT_EAR, LEFT_EYE), (RIGHT_EAR, RIGHT_EYE),
-        # Shoulders
-        (LEFT_SHOULDER, RIGHT_SHOULDER),
+        # Spine to head
+        (PELVIS, SPINE1), (SPINE1, SPINE2), (SPINE2, SPINE3), 
+        (SPINE3, NECK), (NECK, HEAD),
         # Left arm
-        (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
+        (SPINE3, LEFT_SHOULDER), (LEFT_SHOULDER, LEFT_ELBOW), (LEFT_ELBOW, LEFT_WRIST),
         # Right arm
-        (RIGHT_SHOULDER, RIGHT_ELBOW), (RIGHT_ELBOW, RIGHT_WRIST),
-        # Torso
-        (LEFT_SHOULDER, LEFT_HIP), (RIGHT_SHOULDER, RIGHT_HIP),
-        (LEFT_HIP, RIGHT_HIP),
+        (SPINE3, RIGHT_SHOULDER), (RIGHT_SHOULDER, RIGHT_ELBOW), (RIGHT_ELBOW, RIGHT_WRIST),
         # Left leg
-        (LEFT_HIP, LEFT_KNEE), (LEFT_KNEE, LEFT_ANKLE),
+        (PELVIS, LEFT_HIP), (LEFT_HIP, LEFT_KNEE), (LEFT_KNEE, LEFT_ANKLE),
         # Right leg
-        (RIGHT_HIP, RIGHT_KNEE), (RIGHT_KNEE, RIGHT_ANKLE),
+        (PELVIS, RIGHT_HIP), (RIGHT_HIP, RIGHT_KNEE), (RIGHT_KNEE, RIGHT_ANKLE),
     ]
-
-
-# Alias for backward compatibility
-SAM3DJoints = COCOJoints
 
 
 # ============================================================================
@@ -180,6 +116,17 @@ class SMPLHJoints:
     ]
 
 
+def to_numpy(data):
+    """Convert tensor or list to numpy array."""
+    if data is None:
+        return None
+    if isinstance(data, torch.Tensor):
+        return data.cpu().numpy()
+    if isinstance(data, np.ndarray):
+        return data.copy()
+    return np.array(data)
+
+
 def project_points_to_2d(
     points_3d: np.ndarray,
     focal_length: float,
@@ -190,8 +137,9 @@ def project_points_to_2d(
     """
     Project 3D points to 2D using SAM3DBody's camera model.
     
-    This is a FALLBACK function - prefer using pred_keypoints_2d directly
-    as it's already in correct image coordinates.
+    SAM3DBody's coordinates are already image-aligned:
+    - Positive Y = UP in image space (lower Y pixel value)
+    - NO Y negation needed
     
     Args:
         points_3d: (N, 3) array of 3D points
@@ -202,26 +150,25 @@ def project_points_to_2d(
     Returns:
         points_2d: (N, 2) array of 2D points
     """
-    points_3d = ensure_float32(to_numpy(points_3d))
-    if points_3d is None:
-        return np.zeros((0, 2), dtype=np.float32)
-    
-    cam_t = np.array(cam_t, dtype=np.float32).flatten()
+    points_3d = np.array(points_3d)
+    cam_t = np.array(cam_t).flatten()
     
     # Camera center (principal point)
-    cx = float(image_width) / 2.0
-    cy = float(image_height) / 2.0
+    cx = image_width / 2.0
+    cy = image_height / 2.0
     
     if len(cam_t) < 3:
         # Fallback if cam_t is incomplete
         return np.column_stack([
-            np.full(len(points_3d), cx, dtype=np.float32),
-            np.full(len(points_3d), cy, dtype=np.float32)
+            np.full(len(points_3d), cx),
+            np.full(len(points_3d), cy)
         ])
     
-    tx, ty, tz = float(cam_t[0]), float(cam_t[1]), float(cam_t[2])
+    tx, ty, tz = cam_t[0], cam_t[1], cam_t[2]
     
-    # SAM3DBody camera model - NO Y negation needed
+    # SAM3DBody camera model:
+    # Points in camera space = points_3d + cam_t
+    # NO Y negation - coordinates are already image-aligned
     X = points_3d[:, 0] + tx
     Y = points_3d[:, 1] + ty
     Z = points_3d[:, 2] + tz
@@ -233,7 +180,7 @@ def project_points_to_2d(
     x_2d = focal_length * X / Z + cx
     y_2d = focal_length * Y / Z + cy
     
-    return np.stack([x_2d, y_2d], axis=1).astype(np.float32)
+    return np.stack([x_2d, y_2d], axis=1)
 
 
 def estimate_height_from_keypoints(
@@ -386,9 +333,8 @@ def create_motion_debug_overlay(
     """
     Create debug visualization with joint markers overlaid on video.
     
-    Draws body joints based on skeleton mode:
-    - Simple Skeleton (keypoints_3d): 18 joints, indices 0-17
-    - Full Skeleton (joint_coords): 22 body joints from 127-joint format
+    Draws ALL joints from pred_keypoints_2d with index labels for debugging.
+    This helps identify which joint indices correspond to which body parts.
     
     Uses pred_keypoints_2d directly for accurate positioning.
     """
@@ -403,89 +349,76 @@ def create_motion_debug_overlay(
     num_frames = len(images)
     
     # Colors (BGR for OpenCV)
-    COLOR_PELVIS = (0, 255, 0)       # Green - pelvis
-    COLOR_HEAD = (0, 255, 255)       # Yellow - head
-    COLOR_HANDS = (255, 0, 255)      # Magenta - wrists
-    COLOR_FEET = (255, 128, 0)       # Orange - ankles/feet
-    COLOR_JOINTS = (255, 128, 128)   # Light blue - other joints
-    COLOR_SKELETON = (0, 200, 200)   # Cyan - skeleton lines
+    COLOR_JOINTS = (0, 255, 0)       # Green - all joints
     COLOR_VELOCITY = (0, 255, 255)   # Yellow
     COLOR_GROUNDED = (0, 255, 0)     # Green
     COLOR_AIRBORNE = (0, 0, 255)     # Red
     COLOR_PARTIAL = (0, 255, 255)    # Yellow
     COLOR_TEXT = (255, 255, 255)     # White
-    
-    # Determine joint indices and connections for 2D visualization
-    # Note: We ALWAYS use pred_keypoints_2d which is COCO format (17 body joints)
-    # regardless of the 3D analysis mode selected
-    BODY_JOINTS = list(range(COCOJoints.NUM_BODY_JOINTS))  # 0-16
-    SKELETON_CONNECTIONS = COCOJoints.CONNECTIONS
-    SPECIAL_JOINTS = {
-        COCOJoints.PELVIS: (COLOR_PELVIS, 8),      # Left hip as pelvis proxy
-        COCOJoints.HEAD: (COLOR_HEAD, 6),          # Nose as head proxy
-        COCOJoints.LEFT_WRIST: (COLOR_HANDS, 5),
-        COCOJoints.RIGHT_WRIST: (COLOR_HANDS, 5),
-        COCOJoints.LEFT_ANKLE: (COLOR_FEET, 5),
-        COCOJoints.RIGHT_ANKLE: (COLOR_FEET, 5),
-    }
+    COLOR_INDEX = (255, 255, 255)    # White for joint index labels
     
     for i in range(num_frames):
         frame = output[i]
-        h, w = frame.shape[:2]
         
         # Get 2D joint positions for this frame
-        joints_2d_list = subject_motion.get("joints_2d")
-        if joints_2d_list is not None and i < len(joints_2d_list) and joints_2d_list[i] is not None:
-            joints_2d_frame = np.array(joints_2d_list[i])
+        joints_2d = subject_motion.get("joints_2d")
+        if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
+            joints_2d_frame = np.array(joints_2d[i])
             
-            if show_skeleton and len(joints_2d_frame) >= len(BODY_JOINTS):
-                # Draw body joints only (NO skeleton lines - per user request)
-                for j in BODY_JOINTS:
-                    if j < len(joints_2d_frame):
-                        pt = joints_2d_frame[j]
+            # Draw ALL joints with index labels (for debugging joint mapping)
+            if show_skeleton:
+                for j, pt in enumerate(joints_2d_frame):
+                    if pt is not None:
                         x, y = int(pt[0]), int(pt[1])
                         
                         # Skip joints outside image bounds
-                        if x < 0 or y < 0 or x >= w or y >= h:
+                        if x < 0 or y < 0 or x >= frame.shape[1] or y >= frame.shape[0]:
                             continue
                         
-                        # Use special color/size for key joints
-                        if j in SPECIAL_JOINTS:
-                            color, radius = SPECIAL_JOINTS[j]
-                        else:
-                            color = COLOR_JOINTS
-                            radius = 4
-                        
-                        cv2.circle(frame, (x, y), radius, color, -1)
+                        # Draw joint dot
+                        radius = 5
+                        cv2.circle(frame, (x, y), radius, COLOR_JOINTS, -1)
                         cv2.circle(frame, (x, y), radius, (0, 0, 0), 1)  # Black outline
+                        
+                        # Add joint index label (only for first 30 joints to avoid clutter)
+                        if j < 30:
+                            cv2.putText(frame, str(j), (x + 5, y - 5),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, COLOR_INDEX, 1)
         
-        # Draw velocity arrow from pelvis
+        # Mark joint 0 with a larger circle (expected to be pelvis)
+        joints_2d = subject_motion.get("joints_2d")
+        if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
+            joints_2d_frame = np.array(joints_2d[i])
+            if len(joints_2d_frame) > 0:
+                px, py = joints_2d_frame[0]
+                cv2.circle(frame, (int(px), int(py)), 10, (0, 0, 255), 2)  # Red outline for joint 0
+        
+        # Draw velocity arrow from joint 0 (expected pelvis)
         velocity_2d = subject_motion.get("velocity_2d")
-        pelvis_2d_list = subject_motion.get("pelvis_2d")
+        joints_2d_list = subject_motion.get("joints_2d")
         if velocity_2d is not None and i > 0 and (i-1) < len(velocity_2d):
             vx, vy = velocity_2d[i-1]
-            if pelvis_2d_list is not None and i < len(pelvis_2d_list):
-                px, py = pelvis_2d_list[i]
-                # Scale velocity for visibility
-                end_x = int(px + vx * arrow_scale)
-                end_y = int(py + vy * arrow_scale)
-                cv2.arrowedLine(frame, (int(px), int(py)), (end_x, end_y),
-                               COLOR_VELOCITY, 2, tipLength=0.3)
+            if joints_2d_list is not None and i < len(joints_2d_list) and joints_2d_list[i] is not None:
+                joints_frame = np.array(joints_2d_list[i])
+                if len(joints_frame) > 0:
+                    px, py = joints_frame[0]  # Joint 0 = expected pelvis
+                    # Scale velocity for visibility
+                    end_x = int(px + vx * arrow_scale)
+                    end_y = int(py + vy * arrow_scale)
+                    cv2.arrowedLine(frame, (int(px), int(py)), (end_x, end_y),
+                                   COLOR_VELOCITY, 2, tipLength=0.3)
         
         # Draw info text
         y_offset = 30
         line_height = 25
         
-        # Skeleton info - show the mode selected by user
-        skeleton_mode_val = subject_motion.get("skeleton_mode", "Simple Skeleton")
-        kp_source = subject_motion.get("keypoint_source", "keypoints_3d")
-        if kp_source == "joint_coords":
-            skeleton_name = "Full (SMPLH 127)"
-        else:
-            skeleton_name = "Simple (COCO 17)"
-        cv2.putText(frame, f"Skeleton: {skeleton_name}", (10, y_offset),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 2)
-        y_offset += line_height
+        # Joint count info
+        joints_2d_list = subject_motion.get("joints_2d")
+        if joints_2d_list is not None and i < len(joints_2d_list) and joints_2d_list[i] is not None:
+            num_joints = len(joints_2d_list[i])
+            cv2.putText(frame, f"Joints: {num_joints}", (10, y_offset),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 2)
+            y_offset += line_height
         
         # Foot contact
         foot_contact = subject_motion.get("foot_contact", [])
@@ -624,12 +557,12 @@ class SAM4DMotionAnalyzer:
         """
         Analyze subject motion from mesh sequence.
         """
-        print(f"\n[{get_timestamp()}] [Motion Analyzer v{VERSION}] ========== SUBJECT MOTION ANALYSIS ==========")
+        print("\n[Motion Analyzer] ========== SUBJECT MOTION ANALYSIS ==========")
         
         # Determine skeleton mode
         use_simple = skeleton_mode == "Simple Skeleton"
         mode_str = "simple" if use_simple else "full"
-        print(f"[{get_timestamp()}] [Motion Analyzer] Skeleton mode: {skeleton_mode}")
+        print(f"[Motion Analyzer] Skeleton mode: {skeleton_mode}")
         
         # Extract data from mesh sequence
         vertices_list = mesh_sequence.get("vertices", [])
@@ -644,47 +577,47 @@ class SAM4DMotionAnalyzer:
         
         num_frames = len(vertices_list)
         if num_frames == 0:
-            print(f"[{get_timestamp()}] [Motion Analyzer] ERROR: No frames in mesh sequence!")
+            print("[Motion Analyzer] ERROR: No frames in mesh sequence!")
             return ({}, {}, torch.zeros(1, 64, 64, 3), "Error: No frames")
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] Processing {num_frames} frames...")
+        print(f"[Motion Analyzer] Processing {num_frames} frames...")
         
         # Check what keypoint data is available
         has_kp_2d = len(keypoints_2d_list) > 0 and keypoints_2d_list[0] is not None
         has_kp_3d = len(keypoints_3d_list) > 0 and keypoints_3d_list[0] is not None
         has_joint_coords = len(joint_coords_list) > 0 and joint_coords_list[0] is not None
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] Data available: keypoints_2d={has_kp_2d}, keypoints_3d={has_kp_3d}, joint_coords={has_joint_coords}")
+        print(f"[Motion Analyzer] Data available: keypoints_2d={has_kp_2d}, keypoints_3d={has_kp_3d}, joint_coords={has_joint_coords}")
         
         # Debug: Print more details about available data
-        print(f"[{get_timestamp()}] [Motion Analyzer] ===== KEYPOINT DATA DEBUG =====")
-        print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d_list length: {len(keypoints_2d_list)}")
+        print(f"[Motion Analyzer] ===== KEYPOINT DATA DEBUG =====")
+        print(f"[Motion Analyzer] keypoints_2d_list length: {len(keypoints_2d_list)}")
         if len(keypoints_2d_list) > 0 and keypoints_2d_list[0] is not None:
             kp2d_sample = to_numpy(keypoints_2d_list[0])
-            print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d[0] shape: {kp2d_sample.shape if hasattr(kp2d_sample, 'shape') else 'no shape'}")
+            print(f"[Motion Analyzer] keypoints_2d[0] shape: {kp2d_sample.shape if hasattr(kp2d_sample, 'shape') else 'no shape'}")
             if kp2d_sample is not None and len(kp2d_sample) > 0:
-                print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d[0] first 3 points: {kp2d_sample[:3] if len(kp2d_sample) >= 3 else kp2d_sample}")
+                print(f"[Motion Analyzer] keypoints_2d[0] first 3 points: {kp2d_sample[:3] if len(kp2d_sample) >= 3 else kp2d_sample}")
         else:
-            print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d[0] is None or empty")
+            print(f"[Motion Analyzer] keypoints_2d[0] is None or empty")
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_3d_list length: {len(keypoints_3d_list)}")
+        print(f"[Motion Analyzer] keypoints_3d_list length: {len(keypoints_3d_list)}")
         if len(keypoints_3d_list) > 0 and keypoints_3d_list[0] is not None:
             kp3d_sample = to_numpy(keypoints_3d_list[0])
-            print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_3d[0] shape: {kp3d_sample.shape if hasattr(kp3d_sample, 'shape') else 'no shape'}")
+            print(f"[Motion Analyzer] keypoints_3d[0] shape: {kp3d_sample.shape if hasattr(kp3d_sample, 'shape') else 'no shape'}")
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords_list length: {len(joint_coords_list)}")
+        print(f"[Motion Analyzer] joint_coords_list length: {len(joint_coords_list)}")
         if len(joint_coords_list) > 0 and joint_coords_list[0] is not None:
             jc_sample = to_numpy(joint_coords_list[0])
-            print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords[0] shape: {jc_sample.shape if hasattr(jc_sample, 'shape') else 'no shape'}")
-        print(f"[{get_timestamp()}] [Motion Analyzer] =================================")
+            print(f"[Motion Analyzer] joint_coords[0] shape: {jc_sample.shape if hasattr(jc_sample, 'shape') else 'no shape'}")
+        print(f"[Motion Analyzer] =================================")
         
         # Decide which 3D keypoints to use
         if use_simple and has_kp_3d:
             kp_source = "keypoints_3d"
-            print(f"[{get_timestamp()}] [Motion Analyzer] Using 18-joint keypoints_3d for analysis")
+            print(f"[Motion Analyzer] Using 18-joint keypoints_3d for analysis")
         elif has_joint_coords:
             kp_source = "joint_coords"
-            print(f"[{get_timestamp()}] [Motion Analyzer] Using 127-joint joint_coords for analysis")
+            print(f"[Motion Analyzer] Using 127-joint joint_coords for analysis")
         elif has_kp_3d:
             kp_source = "keypoints_3d"
             print(f"[Motion Analyzer] Fallback to 18-joint keypoints_3d")
@@ -721,11 +654,11 @@ class SAM4DMotionAnalyzer:
         if subject_height_m > 0:
             actual_height = subject_height_m
             height_source = "user_input"
-            print(f"[{get_timestamp()}] [Motion Analyzer] Using user-specified height: {actual_height:.2f}m")
+            print(f"[Motion Analyzer] Using user-specified height: {actual_height:.2f}m")
         else:
             actual_height = default_height_m
             height_source = "auto_estimate"
-            print(f"[{get_timestamp()}] [Motion Analyzer] Using default height: {actual_height:.2f}m")
+            print(f"[Motion Analyzer] Using default height: {actual_height:.2f}m")
         
         # Calculate scale factor
         estimated_height = kp_height_info["estimated_height"]
@@ -747,36 +680,24 @@ class SAM4DMotionAnalyzer:
             "keypoint_source": kp_source,
         }
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] Mesh height: {mesh_height_info['mesh_height']:.3f} units")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Estimated height (from joints): {estimated_height:.3f} units")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Scale factor: {scale_factor:.3f}")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Leg length: {kp_height_info['leg_length']:.3f} units")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Torso+head: {kp_height_info['torso_head_length']:.3f} units")
+        print(f"[Motion Analyzer] Mesh height: {mesh_height_info['mesh_height']:.3f} units")
+        print(f"[Motion Analyzer] Estimated height (from joints): {estimated_height:.3f} units")
+        print(f"[Motion Analyzer] Scale factor: {scale_factor:.3f}")
+        print(f"[Motion Analyzer] Leg length: {kp_height_info['leg_length']:.3f} units")
+        print(f"[Motion Analyzer] Torso+head: {kp_height_info['torso_head_length']:.3f} units")
         
         # ===== PER-FRAME ANALYSIS =====
-        # IMPORTANT: We use TWO sets of joint indices:
-        # - 2D indices (COCO format): For pred_keypoints_2d visualization
-        # - 3D indices (COCO or SMPLH): For 3D analysis based on kp_source
-        
-        # 2D indices - ALWAYS COCO format (pred_keypoints_2d)
-        pelvis_idx_2d = COCOJoints.PELVIS      # 11 (left hip as proxy)
-        head_idx_2d = COCOJoints.HEAD          # 0 (nose)
-        left_ankle_idx_2d = COCOJoints.LEFT_ANKLE   # 15
-        right_ankle_idx_2d = COCOJoints.RIGHT_ANKLE  # 16
-        
-        # 3D indices - depends on kp_source
+        # Get joint indices based on mode
         if kp_source == "keypoints_3d":
-            # COCO format for pred_keypoints_3d
-            pelvis_idx_3d = COCOJoints.PELVIS
-            head_idx_3d = COCOJoints.HEAD
-            left_ankle_idx_3d = COCOJoints.LEFT_ANKLE
-            right_ankle_idx_3d = COCOJoints.RIGHT_ANKLE
+            pelvis_idx = SAM3DJoints.PELVIS
+            head_idx = SAM3DJoints.HEAD
+            left_ankle_idx = SAM3DJoints.LEFT_ANKLE
+            right_ankle_idx = SAM3DJoints.RIGHT_ANKLE
         else:
-            # SMPLH format for joint_coords
-            pelvis_idx_3d = SMPLHJoints.PELVIS
-            head_idx_3d = SMPLHJoints.HEAD
-            left_ankle_idx_3d = SMPLHJoints.LEFT_ANKLE
-            right_ankle_idx_3d = SMPLHJoints.RIGHT_ANKLE
+            pelvis_idx = SMPLHJoints.PELVIS
+            head_idx = SMPLHJoints.HEAD
+            left_ankle_idx = SMPLHJoints.LEFT_ANKLE
+            right_ankle_idx = SMPLHJoints.RIGHT_ANKLE
         
         subject_motion = {
             "pelvis_2d": [],
@@ -795,11 +716,7 @@ class SAM4DMotionAnalyzer:
             "scale_factor": scale_factor,
             "skeleton_mode": skeleton_mode,
             "keypoint_source": kp_source,
-            "joints_2d_format": "keypoints_2d",  # ALWAYS COCO format for 2D
         }
-        
-        # Initialize ground level tracking for foot contact detection
-        ground_level = None  # Will be set on first frame
         
         for i in range(num_frames):
             # Get frame data
@@ -824,118 +741,109 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = to_numpy(joint_coords_list[i]) if i < len(joint_coords_list) else None
             
             if keypoints_3d is None:
-                print(f"[{get_timestamp()}] [Motion Analyzer] Warning: No keypoints for frame {i}")
+                print(f"[Motion Analyzer] Warning: No keypoints for frame {i}")
                 keypoints_3d = np.zeros((18 if kp_source == "keypoints_3d" else 127, 3))
             
             # Handle shape
             if keypoints_3d.ndim == 3:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
-            # ===== 2D KEYPOINTS =====
-            # ALWAYS use pred_keypoints_2d directly - it's already in correct image coordinates
-            # This is the KEY FIX: Never project joint_coords to 2D!
+            # Get 2D keypoints (use directly if available, otherwise project)
             if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
                 keypoints_2d = to_numpy(keypoints_2d_list[i])
-                if keypoints_2d is not None:
-                    if keypoints_2d.ndim == 3:
-                        keypoints_2d = keypoints_2d.squeeze(0)
-                    # Ensure float32 and take only x,y
-                    keypoints_2d = ensure_float32(keypoints_2d)
-                    if keypoints_2d.shape[1] >= 2:
-                        joints_2d = keypoints_2d[:, :2]
-                    else:
-                        joints_2d = keypoints_2d
-                    if i == 0:
-                        print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
-                        print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
+                if keypoints_2d.ndim == 3:
+                    keypoints_2d = keypoints_2d.squeeze(0)
+                # Take only x,y (might have confidence as 3rd column)
+                if keypoints_2d.shape[1] >= 2:
+                    joints_2d = keypoints_2d[:, :2]
                 else:
-                    # Fallback if conversion failed
-                    joints_2d = np.zeros((COCOJoints.NUM_BODY_JOINTS, 2), dtype=np.float32)
+                    joints_2d = keypoints_2d
+                if i == 0:
+                    print(f"[Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
+                    print(f"[Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
+                    
+                    # Comprehensive joint position analysis
+                    print(f"\n[Motion Analyzer] ===== JOINT POSITION ANALYSIS (Frame 0) =====")
+                    print(f"[Motion Analyzer] Image size: {image_size[0]}x{image_size[1]}")
+                    print(f"[Motion Analyzer] Image center: ({image_size[0]/2:.1f}, {image_size[1]/2:.1f})")
+                    
+                    # Find bounding box of all joints
+                    valid_joints = joints_2d[~np.isnan(joints_2d).any(axis=1)]
+                    if len(valid_joints) > 0:
+                        min_x, min_y = valid_joints.min(axis=0)
+                        max_x, max_y = valid_joints.max(axis=0)
+                        center_x = (min_x + max_x) / 2
+                        center_y = (min_y + max_y) / 2
+                        print(f"[Motion Analyzer] Joint bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
+                        print(f"[Motion Analyzer] Joint center: ({center_x:.1f}, {center_y:.1f})")
+                        print(f"[Motion Analyzer] Joint spread: {max_x - min_x:.1f}w x {max_y - min_y:.1f}h")
+                    
+                    # Sample some key joints to help identify the format
+                    print(f"[Motion Analyzer] Sample joints:")
+                    sample_indices = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60]
+                    for idx in sample_indices:
+                        if idx < len(joints_2d):
+                            x, y = joints_2d[idx]
+                            print(f"[Motion Analyzer]   Joint {idx:2d}: ({x:7.1f}, {y:7.1f})")
+                    print(f"[Motion Analyzer] =============================================\n")
             else:
-                # Fallback: project keypoints_3d to 2D (NOT joint_coords!)
-                if has_kp_3d and i < len(keypoints_3d_list) and keypoints_3d_list[i] is not None:
-                    kp3d_for_projection = to_numpy(keypoints_3d_list[i])
-                    if kp3d_for_projection is not None:
-                        if kp3d_for_projection.ndim == 3:
-                            kp3d_for_projection = kp3d_for_projection.squeeze(0)
-                        joints_2d = project_points_to_2d(
-                            kp3d_for_projection, focal, camera_t, image_size[0], image_size[1]
-                        )
-                        if i == 0:
-                            print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING keypoints_3d→2D fallback (shape={joints_2d.shape})")
-                    else:
-                        joints_2d = np.zeros((COCOJoints.NUM_BODY_JOINTS, 2), dtype=np.float32)
-                else:
-                    joints_2d = np.zeros((COCOJoints.NUM_BODY_JOINTS, 2), dtype=np.float32)
-                    if i == 0:
-                        print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: No 2D data available, using zeros")
+                # Project 3D to 2D
+                joints_2d = project_points_to_2d(
+                    keypoints_3d, focal, camera_t, image_size[0], image_size[1]
+                )
+                if i == 0:
+                    print(f"[Motion Analyzer] Frame 0: PROJECTING 3D→2D (focal={focal}, cam_t={camera_t})")
+                    print(f"[Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}")
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
             
-            # Pelvis position - use COCO indices for 2D, appropriate indices for 3D
-            pelvis_2d = joints_2d[pelvis_idx_2d] if len(joints_2d) > pelvis_idx_2d else np.array([0, 0], dtype=np.float32)
-            pelvis_3d = keypoints_3d[pelvis_idx_3d] * scale_factor if len(keypoints_3d) > pelvis_idx_3d else np.zeros(3, dtype=np.float32)
+            # Pelvis position - use centroid of all joints as proxy
+            # (since we don't know the correct pelvis index in 70-joint format)
+            joints_2d_valid = joints_2d[~np.isnan(joints_2d).any(axis=1)]
+            if len(joints_2d_valid) > 0:
+                pelvis_2d = np.mean(joints_2d_valid, axis=0)
+            else:
+                pelvis_2d = joints_2d[0] if len(joints_2d) > 0 else np.array([0, 0])
+            
+            joints_3d_valid = keypoints_3d[~np.isnan(keypoints_3d).any(axis=1)]
+            if len(joints_3d_valid) > 0:
+                pelvis_3d = np.mean(joints_3d_valid, axis=0) * scale_factor
+            else:
+                pelvis_3d = keypoints_3d[0] * scale_factor if len(keypoints_3d) > 0 else np.zeros(3)
             
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
-            # Apparent height (pixels) - use COCO indices for 2D positions
-            min_joints_for_height = max(head_idx_2d, left_ankle_idx_2d, right_ankle_idx_2d) + 1
-            if len(joints_2d) >= min_joints_for_height:
-                head_y = joints_2d[head_idx_2d][1]  # Head (nose in COCO)
-                left_ankle_y_2d = joints_2d[left_ankle_idx_2d][1]  # Left ankle
-                right_ankle_y_2d = joints_2d[right_ankle_idx_2d][1]  # Right ankle
-                feet_y = max(left_ankle_y_2d, right_ankle_y_2d)
-                apparent_height = abs(feet_y - head_y)
-            elif vertices is not None:
-                # Fallback: use mesh bounding box
-                mesh_2d = project_points_to_2d(
-                    vertices, focal, camera_t, image_size[0], image_size[1]
-                )
+            # Apparent height (pixels) - use mesh bounding box instead of joints
+            # (since we don't know the correct head/ankle indices)
+            if vertices is not None:
+                # Project mesh vertices to 2D and find height
+                mesh_2d = project_points_to_2d(vertices, focal, camera_t, image_size[0], image_size[1])
                 mesh_min_y = mesh_2d[:, 1].min()
                 mesh_max_y = mesh_2d[:, 1].max()
                 apparent_height = mesh_max_y - mesh_min_y
             else:
-                apparent_height = 0
+                # Fallback: use joint bounding box
+                apparent_height = joints_2d_valid[:, 1].max() - joints_2d_valid[:, 1].min() if len(joints_2d_valid) > 0 else 0
             subject_motion["apparent_height"].append(apparent_height)
             
             # Depth estimate
             depth_m = camera_t[2] * scale_factor
             subject_motion["depth_estimate"].append(depth_m)
             
-            # Foot contact detection using 3D ankle positions
-            # Use the correct indices based on kp_source (COCO or SMPLH)
-            min_joints_needed = max(left_ankle_idx_3d, right_ankle_idx_3d) + 1
-            if len(keypoints_3d) >= min_joints_needed:
-                left_ankle_y = keypoints_3d[left_ankle_idx_3d][1]   # Left ankle Y
-                right_ankle_y = keypoints_3d[right_ankle_idx_3d][1]  # Right ankle Y
-                
-                # Initialize or update ground level estimate (lowest seen)
-                current_lowest = min(left_ankle_y, right_ankle_y)
-                if ground_level is None:
-                    ground_level = current_lowest
-                else:
-                    ground_level = min(ground_level, current_lowest)
-                
-                # Check if ankles are near ground level
-                # Note: In SAM3DBody coordinate system, Y increases upward
-                # So "grounded" means Y is close to the minimum value
-                ground_threshold = 0.05  # 5cm threshold (unscaled)
-                left_grounded = abs(left_ankle_y - ground_level) < ground_threshold
-                right_grounded = abs(right_ankle_y - ground_level) < ground_threshold
-                
-                if left_grounded and right_grounded:
-                    foot_contact = "both"
-                elif left_grounded:
-                    foot_contact = "left"
-                elif right_grounded:
-                    foot_contact = "right"
+            # Foot contact detection - use mesh lowest point instead of joint indices
+            # (since we don't know the correct ankle indices in 70-joint format)
+            if vertices is not None:
+                ground_y = vertices[:, 1].min()
+                lowest_y = vertices[:, 1].min()
+                threshold = 0.05  # 5cm threshold
+                if abs(lowest_y - ground_y) < threshold:
+                    foot_contact = "both"  # At least one foot on ground
                 else:
                     foot_contact = "none"
             else:
                 foot_contact = "none"
-            
             subject_motion["foot_contact"].append(foot_contact)
         
         # ===== CALCULATE VELOCITIES =====
@@ -959,13 +867,13 @@ class SAM4DMotionAnalyzer:
         grounded_count = sum(1 for fc in subject_motion["foot_contact"] if fc in ["both", "left", "right"])
         airborne_count = sum(1 for fc in subject_motion["foot_contact"] if fc == "none")
         
-        print(f"\n[{get_timestamp()}] [Motion Analyzer] ----- MOTION STATISTICS -----")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Frames: {num_frames}")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Avg 2D velocity: {avg_velocity_2d:.2f} px/frame")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Max 2D velocity: {max_velocity_2d:.2f} px/frame")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Grounded frames: {grounded_count} ({100*grounded_count/num_frames:.1f}%)")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Airborne frames: {airborne_count} ({100*airborne_count/num_frames:.1f}%)")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Depth range: {min(subject_motion['depth_estimate']):.2f}m - {max(subject_motion['depth_estimate']):.2f}m")
+        print(f"\n[Motion Analyzer] ----- MOTION STATISTICS -----")
+        print(f"[Motion Analyzer] Frames: {num_frames}")
+        print(f"[Motion Analyzer] Avg 2D velocity: {avg_velocity_2d:.2f} px/frame")
+        print(f"[Motion Analyzer] Max 2D velocity: {max_velocity_2d:.2f} px/frame")
+        print(f"[Motion Analyzer] Grounded frames: {grounded_count} ({100*grounded_count/num_frames:.1f}%)")
+        print(f"[Motion Analyzer] Airborne frames: {airborne_count} ({100*airborne_count/num_frames:.1f}%)")
+        print(f"[Motion Analyzer] Depth range: {min(subject_motion['depth_estimate']):.2f}m - {max(subject_motion['depth_estimate']):.2f}m")
         
         # ===== DEBUG INFO STRING =====
         debug_info = (
@@ -982,7 +890,7 @@ class SAM4DMotionAnalyzer:
         
         # ===== DEBUG OVERLAY =====
         if show_debug and images is not None:
-            print(f"[{get_timestamp()}] [Motion Analyzer] Generating debug overlay...")
+            print(f"[Motion Analyzer] Generating debug overlay...")
             
             images_np = images.cpu().numpy() if isinstance(images, torch.Tensor) else images
             
@@ -1004,7 +912,7 @@ class SAM4DMotionAnalyzer:
         else:
             debug_overlay = torch.zeros(1, 64, 64, 3)
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] =============================================\n")
+        print(f"[Motion Analyzer] =============================================\n")
         
         return (subject_motion, scale_info, debug_overlay, debug_info)
 
