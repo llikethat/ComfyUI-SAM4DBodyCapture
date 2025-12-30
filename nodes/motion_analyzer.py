@@ -143,22 +143,24 @@ def project_points_to_2d(
     cam_t: np.ndarray,
     image_width: int,
     image_height: int,
+    coordinate_system: str = "mhr",
 ) -> np.ndarray:
     """
     Project 3D points to 2D using SAM3DBody's camera model.
-    
-    SAM3DBody's coordinates are already image-aligned:
-    - Positive Y = UP in image space (lower Y pixel value)
-    - NO Y negation needed
     
     Args:
         points_3d: (N, 3) array of 3D points
         focal_length: focal length in pixels
         cam_t: camera translation [tx, ty, tz]
         image_width, image_height: image dimensions
+        coordinate_system: "mhr" for keypoints_3d (18-joint), "smplh" for joint_coords (127-joint)
         
     Returns:
         points_2d: (N, 2) array of 2D points
+        
+    Note:
+        - MHR (keypoints_3d): Y-up, no negation needed
+        - SMPLH (joint_coords): Y needs negation for correct projection
     """
     points_3d = np.array(points_3d)
     cam_t = np.array(cam_t).flatten()
@@ -176,12 +178,14 @@ def project_points_to_2d(
     
     tx, ty, tz = cam_t[0], cam_t[1], cam_t[2]
     
-    # SAM3DBody camera model:
-    # Points in camera space = points_3d + cam_t
-    # NO Y negation - coordinates are already image-aligned
+    # Apply camera translation
     X = points_3d[:, 0] + tx
     Y = points_3d[:, 1] + ty
     Z = points_3d[:, 2] + tz
+    
+    # SMPLH coordinate system has Y inverted relative to image space
+    if coordinate_system == "smplh":
+        Y = -Y
     
     # Avoid division by zero
     Z = np.where(np.abs(Z) < 1e-6, 1e-6, Z)
@@ -796,13 +800,15 @@ class SAM4DMotionAnalyzer:
             # - Simple Skeleton (keypoints_3d): Use pred_keypoints_2d directly (70-joint MHR)
             if kp_source == "joint_coords":
                 # Full Skeleton mode: project joint_coords (127 joints) to 2D
+                # SMPLH format requires Y negation for correct projection
                 joints_2d = project_points_to_2d(
-                    keypoints_3d, focal, camera_t, image_size[0], image_size[1]
+                    keypoints_3d, focal, camera_t, image_size[0], image_size[1],
+                    coordinate_system="smplh"
                 )
                 joints_2d_format = "joint_coords"  # 127-joint SMPLH format
                 if i == 0:
                     print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING joint_coords to 2D (shape={joints_2d.shape})")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}") 
             elif has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
                 # Simple Skeleton mode: use pred_keypoints_2d directly (70-joint MHR)
                 keypoints_2d = to_numpy(keypoints_2d_list[i])
@@ -819,8 +825,10 @@ class SAM4DMotionAnalyzer:
                     print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
             else:
                 # Fallback: project 3D to 2D
+                coord_sys = "smplh" if kp_source == "joint_coords" else "mhr"
                 joints_2d = project_points_to_2d(
-                    keypoints_3d, focal, camera_t, image_size[0], image_size[1]
+                    keypoints_3d, focal, camera_t, image_size[0], image_size[1],
+                    coordinate_system=coord_sys
                 )
                 joints_2d_format = kp_source
                 if i == 0:
@@ -849,8 +857,11 @@ class SAM4DMotionAnalyzer:
                 feet_y = max(left_ankle_y_2d, right_ankle_y_2d)
                 apparent_height = abs(feet_y - head_y)
             elif vertices is not None:
-                # Fallback: use mesh bounding box
-                mesh_2d = project_points_to_2d(vertices, focal, camera_t, image_size[0], image_size[1])
+                # Fallback: use mesh bounding box (vertices are in SMPLH coordinate system)
+                mesh_2d = project_points_to_2d(
+                    vertices, focal, camera_t, image_size[0], image_size[1],
+                    coordinate_system="smplh"
+                )
                 mesh_min_y = mesh_2d[:, 1].min()
                 mesh_max_y = mesh_2d[:, 1].max()
                 apparent_height = mesh_max_y - mesh_min_y
