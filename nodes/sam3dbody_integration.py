@@ -318,34 +318,27 @@ class SAM4DBodyBatchProcess:
         
         from sam_3d_body import SAM3DBodyEstimator
         
+        # Debug: print model dict keys
+        print(f"[SAM4DBodyCapture] Model dict keys: {list(model.keys())}")
+        
         # Handle both SAM4D_BODY_MODEL and SAM3D_MODEL formats
+        # SAM3D_MODEL from original loader has: model, model_cfg, (optionally mhr_path)
         if "model" in model:
-            # SAM4D_BODY_MODEL format (from our loader)
             sam_model = model["model"]
-            model_cfg = model["model_cfg"]
-            device = model["device"]
-            faces = model["faces"]
-        elif "sam_3d_body_model" in model:
-            # SAM3D_MODEL format (from original SAM3DBody loader)
-            sam_model = model["sam_3d_body_model"]
             model_cfg = model.get("model_cfg")
-            device = next(sam_model.parameters()).device if hasattr(sam_model, 'parameters') else "cuda"
-            # Get faces from model
-            try:
-                faces = sam_model.head_pose.faces.cpu().numpy()
-            except:
-                faces = None
-            print(f"[SAM4DBodyCapture] Using original SAM3D_MODEL format")
+            device = str(next(sam_model.parameters()).device) if hasattr(sam_model, 'parameters') else "cuda"
         else:
-            # Try direct access (for compatibility)
-            sam_model = model
-            model_cfg = None
-            device = "cuda"
-            try:
-                faces = sam_model.head_pose.faces.cpu().numpy() if hasattr(sam_model, 'head_pose') else None
-            except:
-                faces = None
-            print(f"[SAM4DBodyCapture] Using direct model access")
+            raise ValueError(f"Unknown model format. Keys: {list(model.keys())}")
+        
+        # Get faces from the model itself
+        try:
+            faces = sam_model.head_pose.faces.cpu().numpy()
+            print(f"[SAM4DBodyCapture] Got faces: {faces.shape}")
+        except Exception as e:
+            print(f"[SAM4DBodyCapture] Warning: Could not get faces from model: {e}")
+            faces = None
+        
+        print(f"[SAM4DBodyCapture] Using device: {device}")
         
         # Create estimator
         estimator = SAM3DBodyEstimator(
