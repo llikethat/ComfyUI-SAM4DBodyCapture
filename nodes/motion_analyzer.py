@@ -333,8 +333,9 @@ def create_motion_debug_overlay(
     """
     Create debug visualization with joint markers overlaid on video.
     
-    Draws ALL joints from pred_keypoints_2d with index labels for debugging.
-    This helps identify which joint indices correspond to which body parts.
+    Draws body joints based on skeleton mode:
+    - Simple Skeleton (keypoints_3d): 18 joints, indices 0-17
+    - Full Skeleton (joint_coords): 22 body joints from 127-joint format
     
     Uses pred_keypoints_2d directly for accurate positioning.
     """
@@ -349,76 +350,115 @@ def create_motion_debug_overlay(
     num_frames = len(images)
     
     # Colors (BGR for OpenCV)
-    COLOR_JOINTS = (0, 255, 0)       # Green - all joints
+    COLOR_PELVIS = (0, 255, 0)       # Green - pelvis
+    COLOR_HEAD = (0, 255, 255)       # Yellow - head
+    COLOR_HANDS = (255, 0, 255)      # Magenta - wrists
+    COLOR_FEET = (255, 128, 0)       # Orange - ankles/feet
+    COLOR_JOINTS = (255, 128, 128)   # Light blue - other joints
+    COLOR_SKELETON = (0, 200, 200)   # Cyan - skeleton lines
     COLOR_VELOCITY = (0, 255, 255)   # Yellow
     COLOR_GROUNDED = (0, 255, 0)     # Green
     COLOR_AIRBORNE = (0, 0, 255)     # Red
     COLOR_PARTIAL = (0, 255, 255)    # Yellow
     COLOR_TEXT = (255, 255, 255)     # White
-    COLOR_INDEX = (255, 255, 255)    # White for joint index labels
+    
+    # Determine joint indices and connections based on 2D keypoint format
+    # Note: pred_keypoints_2d always uses 70-joint MHR format (body joints 0-17)
+    # joint_coords uses 127-joint SMPLH format (body joints 0-21)
+    joints_2d_format = subject_motion.get("joints_2d_format", "keypoints_2d")
+    
+    if joints_2d_format == "joint_coords":
+        # 127-joint SMPLH format - use first 22 body joints
+        BODY_JOINTS = list(range(22))
+        SKELETON_CONNECTIONS = SMPLHJoints.CONNECTIONS
+        SPECIAL_JOINTS = {
+            SMPLHJoints.PELVIS: (COLOR_PELVIS, 8),
+            SMPLHJoints.HEAD: (COLOR_HEAD, 6),
+            SMPLHJoints.LEFT_WRIST: (COLOR_HANDS, 5),
+            SMPLHJoints.RIGHT_WRIST: (COLOR_HANDS, 5),
+            SMPLHJoints.LEFT_ANKLE: (COLOR_FEET, 5),
+            SMPLHJoints.RIGHT_ANKLE: (COLOR_FEET, 5),
+            SMPLHJoints.LEFT_FOOT: (COLOR_FEET, 4),
+            SMPLHJoints.RIGHT_FOOT: (COLOR_FEET, 4),
+        }
+    else:
+        # 70-joint MHR format (from pred_keypoints_2d) - body joints 0-17
+        BODY_JOINTS = list(range(18))
+        SKELETON_CONNECTIONS = SAM3DJoints.CONNECTIONS
+        SPECIAL_JOINTS = {
+            SAM3DJoints.PELVIS: (COLOR_PELVIS, 8),
+            SAM3DJoints.HEAD: (COLOR_HEAD, 6),
+            SAM3DJoints.LEFT_WRIST: (COLOR_HANDS, 5),
+            SAM3DJoints.RIGHT_WRIST: (COLOR_HANDS, 5),
+            SAM3DJoints.LEFT_ANKLE: (COLOR_FEET, 5),
+            SAM3DJoints.RIGHT_ANKLE: (COLOR_FEET, 5),
+        }
     
     for i in range(num_frames):
         frame = output[i]
+        h, w = frame.shape[:2]
         
         # Get 2D joint positions for this frame
-        joints_2d = subject_motion.get("joints_2d")
-        if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
-            joints_2d_frame = np.array(joints_2d[i])
+        joints_2d_list = subject_motion.get("joints_2d")
+        if joints_2d_list is not None and i < len(joints_2d_list) and joints_2d_list[i] is not None:
+            joints_2d_frame = np.array(joints_2d_list[i])
             
-            # Draw ALL joints with index labels (for debugging joint mapping)
-            if show_skeleton:
-                for j, pt in enumerate(joints_2d_frame):
-                    if pt is not None:
+            if show_skeleton and len(joints_2d_frame) >= len(BODY_JOINTS):
+                # Draw skeleton connections first (behind joints)
+                for (j1, j2) in SKELETON_CONNECTIONS:
+                    if j1 < len(joints_2d_frame) and j2 < len(joints_2d_frame):
+                        pt1 = joints_2d_frame[j1]
+                        pt2 = joints_2d_frame[j2]
+                        x1, y1 = int(pt1[0]), int(pt1[1])
+                        x2, y2 = int(pt2[0]), int(pt2[1])
+                        if 0 <= x1 < w and 0 <= y1 < h and 0 <= x2 < w and 0 <= y2 < h:
+                            cv2.line(frame, (x1, y1), (x2, y2), COLOR_SKELETON, 2)
+                
+                # Draw body joints only
+                for j in BODY_JOINTS:
+                    if j < len(joints_2d_frame):
+                        pt = joints_2d_frame[j]
                         x, y = int(pt[0]), int(pt[1])
                         
                         # Skip joints outside image bounds
-                        if x < 0 or y < 0 or x >= frame.shape[1] or y >= frame.shape[0]:
+                        if x < 0 or y < 0 or x >= w or y >= h:
                             continue
                         
-                        # Draw joint dot
-                        radius = 5
-                        cv2.circle(frame, (x, y), radius, COLOR_JOINTS, -1)
-                        cv2.circle(frame, (x, y), radius, (0, 0, 0), 1)  # Black outline
+                        # Use special color/size for key joints
+                        if j in SPECIAL_JOINTS:
+                            color, radius = SPECIAL_JOINTS[j]
+                        else:
+                            color = COLOR_JOINTS
+                            radius = 4
                         
-                        # Add joint index label (only for first 30 joints to avoid clutter)
-                        if j < 30:
-                            cv2.putText(frame, str(j), (x + 5, y - 5),
-                                       cv2.FONT_HERSHEY_SIMPLEX, 0.3, COLOR_INDEX, 1)
+                        cv2.circle(frame, (x, y), radius, color, -1)
+                        cv2.circle(frame, (x, y), radius, (0, 0, 0), 1)  # Black outline
         
-        # Mark joint 0 with a larger circle (expected to be pelvis)
-        joints_2d = subject_motion.get("joints_2d")
-        if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
-            joints_2d_frame = np.array(joints_2d[i])
-            if len(joints_2d_frame) > 0:
-                px, py = joints_2d_frame[0]
-                cv2.circle(frame, (int(px), int(py)), 10, (0, 0, 255), 2)  # Red outline for joint 0
-        
-        # Draw velocity arrow from joint 0 (expected pelvis)
+        # Draw velocity arrow from pelvis
         velocity_2d = subject_motion.get("velocity_2d")
-        joints_2d_list = subject_motion.get("joints_2d")
+        pelvis_2d_list = subject_motion.get("pelvis_2d")
         if velocity_2d is not None and i > 0 and (i-1) < len(velocity_2d):
             vx, vy = velocity_2d[i-1]
-            if joints_2d_list is not None and i < len(joints_2d_list) and joints_2d_list[i] is not None:
-                joints_frame = np.array(joints_2d_list[i])
-                if len(joints_frame) > 0:
-                    px, py = joints_frame[0]  # Joint 0 = expected pelvis
-                    # Scale velocity for visibility
-                    end_x = int(px + vx * arrow_scale)
-                    end_y = int(py + vy * arrow_scale)
-                    cv2.arrowedLine(frame, (int(px), int(py)), (end_x, end_y),
-                                   COLOR_VELOCITY, 2, tipLength=0.3)
+            if pelvis_2d_list is not None and i < len(pelvis_2d_list):
+                px, py = pelvis_2d_list[i]
+                # Scale velocity for visibility
+                end_x = int(px + vx * arrow_scale)
+                end_y = int(py + vy * arrow_scale)
+                cv2.arrowedLine(frame, (int(px), int(py)), (end_x, end_y),
+                               COLOR_VELOCITY, 2, tipLength=0.3)
         
         # Draw info text
         y_offset = 30
         line_height = 25
         
-        # Joint count info
-        joints_2d_list = subject_motion.get("joints_2d")
-        if joints_2d_list is not None and i < len(joints_2d_list) and joints_2d_list[i] is not None:
-            num_joints = len(joints_2d_list[i])
-            cv2.putText(frame, f"Joints: {num_joints}", (10, y_offset),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 2)
-            y_offset += line_height
+        # Skeleton info
+        if joints_2d_format == "joint_coords":
+            skeleton_name = "Full (SMPLH 22)"
+        else:
+            skeleton_name = "Simple (MHR 18)"
+        cv2.putText(frame, f"Skeleton: {skeleton_name}", (10, y_offset),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 2)
+        y_offset += line_height
         
         # Foot contact
         foot_contact = subject_motion.get("foot_contact", [])
@@ -718,6 +758,9 @@ class SAM4DMotionAnalyzer:
             "keypoint_source": kp_source,
         }
         
+        # Initialize ground level tracking for foot contact detection
+        ground_level = None  # Will be set on first frame
+        
         for i in range(num_frames):
             # Get frame data
             vertices = to_numpy(vertices_list[i])
@@ -749,6 +792,8 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # Get 2D keypoints (use directly if available, otherwise project)
+            # NOTE: pred_keypoints_2d always uses 70-joint MHR format (body joints 0-17)
+            # This is different from joint_coords which uses 127-joint SMPLH format
             if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
                 keypoints_2d = to_numpy(keypoints_2d_list[i])
                 if keypoints_2d.ndim == 3:
@@ -758,6 +803,8 @@ class SAM4DMotionAnalyzer:
                     joints_2d = keypoints_2d[:, :2]
                 else:
                     joints_2d = keypoints_2d
+                # pred_keypoints_2d uses 70-joint format with body joints 0-17
+                joints_2d_format = "keypoints_2d"  # Always 70-joint MHR format
                 if i == 0:
                     print(f"[Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
                     print(f"[Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
@@ -787,63 +834,84 @@ class SAM4DMotionAnalyzer:
                             print(f"[Motion Analyzer]   Joint {idx:2d}: ({x:7.1f}, {y:7.1f})")
                     print(f"[Motion Analyzer] =============================================\n")
             else:
-                # Project 3D to 2D
+                # Project 3D to 2D - use the same format as keypoints_3d
                 joints_2d = project_points_to_2d(
                     keypoints_3d, focal, camera_t, image_size[0], image_size[1]
                 )
+                joints_2d_format = kp_source  # Same format as 3D source
                 if i == 0:
                     print(f"[Motion Analyzer] Frame 0: PROJECTING 3D→2D (focal={focal}, cam_t={camera_t})")
                     print(f"[Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}")
             
+            # Store the 2D format on first frame
+            if i == 0:
+                subject_motion["joints_2d_format"] = joints_2d_format
+            
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
             
-            # Pelvis position - use centroid of all joints as proxy
-            # (since we don't know the correct pelvis index in 70-joint format)
-            joints_2d_valid = joints_2d[~np.isnan(joints_2d).any(axis=1)]
-            if len(joints_2d_valid) > 0:
-                pelvis_2d = np.mean(joints_2d_valid, axis=0)
-            else:
-                pelvis_2d = joints_2d[0] if len(joints_2d) > 0 else np.array([0, 0])
-            
-            joints_3d_valid = keypoints_3d[~np.isnan(keypoints_3d).any(axis=1)]
-            if len(joints_3d_valid) > 0:
-                pelvis_3d = np.mean(joints_3d_valid, axis=0) * scale_factor
-            else:
-                pelvis_3d = keypoints_3d[0] * scale_factor if len(keypoints_3d) > 0 else np.zeros(3)
+            # Pelvis position - use pelvis_idx (0 for both formats)
+            pelvis_2d = joints_2d[pelvis_idx] if len(joints_2d) > pelvis_idx else np.array([0, 0])
+            pelvis_3d = keypoints_3d[pelvis_idx] * scale_factor if len(keypoints_3d) > pelvis_idx else np.zeros(3)
             
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
-            # Apparent height (pixels) - use mesh bounding box instead of joints
-            # (since we don't know the correct head/ankle indices)
-            if vertices is not None:
-                # Project mesh vertices to 2D and find height
+            # Apparent height (pixels) - use correct joint indices for skeleton mode
+            min_joints_for_height = max(head_idx, left_ankle_idx, right_ankle_idx) + 1
+            if len(joints_2d) >= min_joints_for_height:
+                head_y = joints_2d[head_idx][1]  # Head
+                left_ankle_y_2d = joints_2d[left_ankle_idx][1]  # Left ankle
+                right_ankle_y_2d = joints_2d[right_ankle_idx][1]  # Right ankle
+                feet_y = max(left_ankle_y_2d, right_ankle_y_2d)
+                apparent_height = abs(feet_y - head_y)
+            elif vertices is not None:
+                # Fallback: use mesh bounding box
                 mesh_2d = project_points_to_2d(vertices, focal, camera_t, image_size[0], image_size[1])
                 mesh_min_y = mesh_2d[:, 1].min()
                 mesh_max_y = mesh_2d[:, 1].max()
                 apparent_height = mesh_max_y - mesh_min_y
             else:
-                # Fallback: use joint bounding box
-                apparent_height = joints_2d_valid[:, 1].max() - joints_2d_valid[:, 1].min() if len(joints_2d_valid) > 0 else 0
+                apparent_height = 0
             subject_motion["apparent_height"].append(apparent_height)
             
             # Depth estimate
             depth_m = camera_t[2] * scale_factor
             subject_motion["depth_estimate"].append(depth_m)
             
-            # Foot contact detection - use mesh lowest point instead of joint indices
-            # (since we don't know the correct ankle indices in 70-joint format)
-            if vertices is not None:
-                ground_y = vertices[:, 1].min()
-                lowest_y = vertices[:, 1].min()
-                threshold = 0.05  # 5cm threshold
-                if abs(lowest_y - ground_y) < threshold:
-                    foot_contact = "both"  # At least one foot on ground
+            # Foot contact detection using ankle joint Y positions
+            # Compare against reference ground level (lowest seen across all frames)
+            # Use the correct indices based on skeleton mode (set at start of function)
+            min_joints_needed = max(left_ankle_idx, right_ankle_idx) + 1
+            if len(keypoints_3d) >= min_joints_needed:
+                left_ankle_y = keypoints_3d[left_ankle_idx][1]   # Left ankle Y
+                right_ankle_y = keypoints_3d[right_ankle_idx][1]  # Right ankle Y
+                
+                # Initialize or update ground level estimate (lowest seen)
+                current_lowest = min(left_ankle_y, right_ankle_y)
+                if ground_level is None:
+                    ground_level = current_lowest
+                else:
+                    ground_level = min(ground_level, current_lowest)
+                
+                # Check if ankles are near ground level
+                # Note: In SAM3DBody coordinate system, Y increases upward
+                # So "grounded" means Y is close to the minimum value
+                ground_threshold = 0.05  # 5cm threshold (unscaled)
+                left_grounded = abs(left_ankle_y - ground_level) < ground_threshold
+                right_grounded = abs(right_ankle_y - ground_level) < ground_threshold
+                
+                if left_grounded and right_grounded:
+                    foot_contact = "both"
+                elif left_grounded:
+                    foot_contact = "left"
+                elif right_grounded:
+                    foot_contact = "right"
                 else:
                     foot_contact = "none"
             else:
                 foot_contact = "none"
+            
             subject_motion["foot_contact"].append(foot_contact)
         
         # ===== CALCULATE VELOCITIES =====
