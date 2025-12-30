@@ -16,7 +16,17 @@ import torch
 import numpy as np
 import cv2
 from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime, timezone, timedelta
 import folder_paths
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_timestamp():
+    """Get current timestamp in IST (UTC+5:30) format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+
 
 # Global cache for model
 _MODEL_CACHE = {}
@@ -338,7 +348,7 @@ class SAM4DBodyBatchProcess:
             print(f"[SAM4DBodyCapture] Warning: Could not get faces from model: {e}")
             faces = None
         
-        print(f"[SAM4DBodyCapture] Using device: {device}")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Using device: {device}")
         
         # Create estimator
         estimator = SAM3DBodyEstimator(
@@ -351,7 +361,7 @@ class SAM4DBodyBatchProcess:
         
         # Get number of frames
         num_frames = images.shape[0]
-        print(f"[SAM4DBodyCapture] Processing {num_frames} frames through SAM3DBody...")
+        print(f"[{get_timestamp()}] [SAM4DBodyCapture] Processing {num_frames} frames through SAM3DBody...")
         
         # Process camera intrinsics
         cam_int = None
@@ -514,8 +524,8 @@ class SAM4DBodyBatchProcess:
                 
                 # Debug: Print what we're getting on first frame
                 if frame_idx == 0 or (mesh_sequence["frame_count"] == 0):
-                    print(f"\n[SAM4D] ===== KEYPOINT DEBUG (Frame {frame_idx}) =====")
-                    print(f"[SAM4D] pred_keypoints_2d: {type(kp_2d).__name__}", end="")
+                    print(f"\n[{get_timestamp()}] [SAM4D] ===== KEYPOINT DEBUG (Frame {frame_idx}) =====")
+                    print(f"[{get_timestamp()}] [SAM4D] pred_keypoints_2d: {type(kp_2d).__name__}", end="")
                     if kp_2d is not None:
                         if hasattr(kp_2d, 'shape'):
                             print(f" shape={kp_2d.shape}")
@@ -524,7 +534,7 @@ class SAM4DBodyBatchProcess:
                     else:
                         print(" (None)")
                     
-                    print(f"[SAM4D] pred_keypoints_3d: {type(kp_3d).__name__}", end="")
+                    print(f"[{get_timestamp()}] [SAM4D] pred_keypoints_3d: {type(kp_3d).__name__}", end="")
                     if kp_3d is not None:
                         if hasattr(kp_3d, 'shape'):
                             print(f" shape={kp_3d.shape}")
@@ -534,7 +544,7 @@ class SAM4DBodyBatchProcess:
                         print(" (None)")
                     
                     jc = output.get("pred_joint_coords", None)
-                    print(f"[SAM4D] pred_joint_coords: {type(jc).__name__}", end="")
+                    print(f"[{get_timestamp()}] [SAM4D] pred_joint_coords: {type(jc).__name__}", end="")
                     if jc is not None:
                         if hasattr(jc, 'shape'):
                             print(f" shape={jc.shape}")
@@ -542,7 +552,7 @@ class SAM4DBodyBatchProcess:
                             print(f" len={len(jc) if hasattr(jc, '__len__') else 'N/A'}")
                     else:
                         print(" (None)")
-                    print(f"[SAM4D] ===========================================\n")
+                    print(f"[{get_timestamp()}] [SAM4D] ===========================================")
                 
                 mesh_sequence["params"]["keypoints_2d"].append(kp_2d)
                 mesh_sequence["params"]["keypoints_3d"].append(kp_3d)
@@ -552,7 +562,7 @@ class SAM4DBodyBatchProcess:
                 # Debug image (just the input for now)
                 debug_images.append(img_np)
         
-        print(f"\n[SAM4DBodyCapture] Processed {mesh_sequence['frame_count']} frames successfully")
+        print(f"\n[{get_timestamp()}] [SAM4DBodyCapture] Processed {mesh_sequence['frame_count']} frames successfully")
         
         # Validate we have at least one frame
         if mesh_sequence["frame_count"] == 0 or len(mesh_sequence["vertices"]) == 0:

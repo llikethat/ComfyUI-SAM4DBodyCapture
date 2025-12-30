@@ -22,6 +22,16 @@ import numpy as np
 import torch
 import cv2
 from typing import Dict, List, Optional, Tuple, Any
+from datetime import datetime, timezone, timedelta
+
+
+# IST timezone (UTC+5:30)
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_timestamp():
+    """Get current timestamp in IST (UTC+5:30) format."""
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
 
 
 # ============================================================================
@@ -404,17 +414,7 @@ def create_motion_debug_overlay(
             joints_2d_frame = np.array(joints_2d_list[i])
             
             if show_skeleton and len(joints_2d_frame) >= len(BODY_JOINTS):
-                # Draw skeleton connections first (behind joints)
-                for (j1, j2) in SKELETON_CONNECTIONS:
-                    if j1 < len(joints_2d_frame) and j2 < len(joints_2d_frame):
-                        pt1 = joints_2d_frame[j1]
-                        pt2 = joints_2d_frame[j2]
-                        x1, y1 = int(pt1[0]), int(pt1[1])
-                        x2, y2 = int(pt2[0]), int(pt2[1])
-                        if 0 <= x1 < w and 0 <= y1 < h and 0 <= x2 < w and 0 <= y2 < h:
-                            cv2.line(frame, (x1, y1), (x2, y2), COLOR_SKELETON, 2)
-                
-                # Draw body joints only
+                # Draw body joints only (NO skeleton lines - per user request)
                 for j in BODY_JOINTS:
                     if j < len(joints_2d_frame):
                         pt = joints_2d_frame[j]
@@ -597,12 +597,12 @@ class SAM4DMotionAnalyzer:
         """
         Analyze subject motion from mesh sequence.
         """
-        print("\n[Motion Analyzer] ========== SUBJECT MOTION ANALYSIS ==========")
+        print(f"\n[{get_timestamp()}] [Motion Analyzer] ========== SUBJECT MOTION ANALYSIS ==========")
         
         # Determine skeleton mode
         use_simple = skeleton_mode == "Simple Skeleton"
         mode_str = "simple" if use_simple else "full"
-        print(f"[Motion Analyzer] Skeleton mode: {skeleton_mode}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Skeleton mode: {skeleton_mode}")
         
         # Extract data from mesh sequence
         vertices_list = mesh_sequence.get("vertices", [])
@@ -617,47 +617,47 @@ class SAM4DMotionAnalyzer:
         
         num_frames = len(vertices_list)
         if num_frames == 0:
-            print("[Motion Analyzer] ERROR: No frames in mesh sequence!")
+            print(f"[{get_timestamp()}] [Motion Analyzer] ERROR: No frames in mesh sequence!")
             return ({}, {}, torch.zeros(1, 64, 64, 3), "Error: No frames")
         
-        print(f"[Motion Analyzer] Processing {num_frames} frames...")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Processing {num_frames} frames...")
         
         # Check what keypoint data is available
         has_kp_2d = len(keypoints_2d_list) > 0 and keypoints_2d_list[0] is not None
         has_kp_3d = len(keypoints_3d_list) > 0 and keypoints_3d_list[0] is not None
         has_joint_coords = len(joint_coords_list) > 0 and joint_coords_list[0] is not None
         
-        print(f"[Motion Analyzer] Data available: keypoints_2d={has_kp_2d}, keypoints_3d={has_kp_3d}, joint_coords={has_joint_coords}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Data available: keypoints_2d={has_kp_2d}, keypoints_3d={has_kp_3d}, joint_coords={has_joint_coords}")
         
         # Debug: Print more details about available data
-        print(f"[Motion Analyzer] ===== KEYPOINT DATA DEBUG =====")
-        print(f"[Motion Analyzer] keypoints_2d_list length: {len(keypoints_2d_list)}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] ===== KEYPOINT DATA DEBUG =====")
+        print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d_list length: {len(keypoints_2d_list)}")
         if len(keypoints_2d_list) > 0 and keypoints_2d_list[0] is not None:
             kp2d_sample = to_numpy(keypoints_2d_list[0])
-            print(f"[Motion Analyzer] keypoints_2d[0] shape: {kp2d_sample.shape if hasattr(kp2d_sample, 'shape') else 'no shape'}")
+            print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d[0] shape: {kp2d_sample.shape if hasattr(kp2d_sample, 'shape') else 'no shape'}")
             if kp2d_sample is not None and len(kp2d_sample) > 0:
-                print(f"[Motion Analyzer] keypoints_2d[0] first 3 points: {kp2d_sample[:3] if len(kp2d_sample) >= 3 else kp2d_sample}")
+                print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d[0] first 3 points: {kp2d_sample[:3] if len(kp2d_sample) >= 3 else kp2d_sample}")
         else:
-            print(f"[Motion Analyzer] keypoints_2d[0] is None or empty")
+            print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_2d[0] is None or empty")
         
-        print(f"[Motion Analyzer] keypoints_3d_list length: {len(keypoints_3d_list)}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_3d_list length: {len(keypoints_3d_list)}")
         if len(keypoints_3d_list) > 0 and keypoints_3d_list[0] is not None:
             kp3d_sample = to_numpy(keypoints_3d_list[0])
-            print(f"[Motion Analyzer] keypoints_3d[0] shape: {kp3d_sample.shape if hasattr(kp3d_sample, 'shape') else 'no shape'}")
+            print(f"[{get_timestamp()}] [Motion Analyzer] keypoints_3d[0] shape: {kp3d_sample.shape if hasattr(kp3d_sample, 'shape') else 'no shape'}")
         
-        print(f"[Motion Analyzer] joint_coords_list length: {len(joint_coords_list)}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords_list length: {len(joint_coords_list)}")
         if len(joint_coords_list) > 0 and joint_coords_list[0] is not None:
             jc_sample = to_numpy(joint_coords_list[0])
-            print(f"[Motion Analyzer] joint_coords[0] shape: {jc_sample.shape if hasattr(jc_sample, 'shape') else 'no shape'}")
-        print(f"[Motion Analyzer] =================================")
+            print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords[0] shape: {jc_sample.shape if hasattr(jc_sample, 'shape') else 'no shape'}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] =================================")
         
         # Decide which 3D keypoints to use
         if use_simple and has_kp_3d:
             kp_source = "keypoints_3d"
-            print(f"[Motion Analyzer] Using 18-joint keypoints_3d for analysis")
+            print(f"[{get_timestamp()}] [Motion Analyzer] Using 18-joint keypoints_3d for analysis")
         elif has_joint_coords:
             kp_source = "joint_coords"
-            print(f"[Motion Analyzer] Using 127-joint joint_coords for analysis")
+            print(f"[{get_timestamp()}] [Motion Analyzer] Using 127-joint joint_coords for analysis")
         elif has_kp_3d:
             kp_source = "keypoints_3d"
             print(f"[Motion Analyzer] Fallback to 18-joint keypoints_3d")
@@ -694,11 +694,11 @@ class SAM4DMotionAnalyzer:
         if subject_height_m > 0:
             actual_height = subject_height_m
             height_source = "user_input"
-            print(f"[Motion Analyzer] Using user-specified height: {actual_height:.2f}m")
+            print(f"[{get_timestamp()}] [Motion Analyzer] Using user-specified height: {actual_height:.2f}m")
         else:
             actual_height = default_height_m
             height_source = "auto_estimate"
-            print(f"[Motion Analyzer] Using default height: {actual_height:.2f}m")
+            print(f"[{get_timestamp()}] [Motion Analyzer] Using default height: {actual_height:.2f}m")
         
         # Calculate scale factor
         estimated_height = kp_height_info["estimated_height"]
@@ -720,11 +720,11 @@ class SAM4DMotionAnalyzer:
             "keypoint_source": kp_source,
         }
         
-        print(f"[Motion Analyzer] Mesh height: {mesh_height_info['mesh_height']:.3f} units")
-        print(f"[Motion Analyzer] Estimated height (from joints): {estimated_height:.3f} units")
-        print(f"[Motion Analyzer] Scale factor: {scale_factor:.3f}")
-        print(f"[Motion Analyzer] Leg length: {kp_height_info['leg_length']:.3f} units")
-        print(f"[Motion Analyzer] Torso+head: {kp_height_info['torso_head_length']:.3f} units")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Mesh height: {mesh_height_info['mesh_height']:.3f} units")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Estimated height (from joints): {estimated_height:.3f} units")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Scale factor: {scale_factor:.3f}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Leg length: {kp_height_info['leg_length']:.3f} units")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Torso+head: {kp_height_info['torso_head_length']:.3f} units")
         
         # ===== PER-FRAME ANALYSIS =====
         # Get joint indices based on mode
@@ -784,17 +784,27 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = to_numpy(joint_coords_list[i]) if i < len(joint_coords_list) else None
             
             if keypoints_3d is None:
-                print(f"[Motion Analyzer] Warning: No keypoints for frame {i}")
+                print(f"[{get_timestamp()}] [Motion Analyzer] Warning: No keypoints for frame {i}")
                 keypoints_3d = np.zeros((18 if kp_source == "keypoints_3d" else 127, 3))
             
             # Handle shape
             if keypoints_3d.ndim == 3:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
-            # Get 2D keypoints (use directly if available, otherwise project)
-            # NOTE: pred_keypoints_2d always uses 70-joint MHR format (body joints 0-17)
-            # This is different from joint_coords which uses 127-joint SMPLH format
-            if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
+            # Get 2D keypoints based on skeleton mode:
+            # - Full Skeleton (joint_coords): Project 127-joint 3D to 2D
+            # - Simple Skeleton (keypoints_3d): Use pred_keypoints_2d directly (70-joint MHR)
+            if kp_source == "joint_coords":
+                # Full Skeleton mode: project joint_coords (127 joints) to 2D
+                joints_2d = project_points_to_2d(
+                    keypoints_3d, focal, camera_t, image_size[0], image_size[1]
+                )
+                joints_2d_format = "joint_coords"  # 127-joint SMPLH format
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING joint_coords to 2D (shape={joints_2d.shape})")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}")
+            elif has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
+                # Simple Skeleton mode: use pred_keypoints_2d directly (70-joint MHR)
                 keypoints_2d = to_numpy(keypoints_2d_list[i])
                 if keypoints_2d.ndim == 3:
                     keypoints_2d = keypoints_2d.squeeze(0)
@@ -803,45 +813,18 @@ class SAM4DMotionAnalyzer:
                     joints_2d = keypoints_2d[:, :2]
                 else:
                     joints_2d = keypoints_2d
-                # pred_keypoints_2d uses 70-joint format with body joints 0-17
-                joints_2d_format = "keypoints_2d"  # Always 70-joint MHR format
+                joints_2d_format = "keypoints_2d"  # 70-joint MHR format
                 if i == 0:
-                    print(f"[Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
-                    print(f"[Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
-                    
-                    # Comprehensive joint position analysis
-                    print(f"\n[Motion Analyzer] ===== JOINT POSITION ANALYSIS (Frame 0) =====")
-                    print(f"[Motion Analyzer] Image size: {image_size[0]}x{image_size[1]}")
-                    print(f"[Motion Analyzer] Image center: ({image_size[0]/2:.1f}, {image_size[1]/2:.1f})")
-                    
-                    # Find bounding box of all joints
-                    valid_joints = joints_2d[~np.isnan(joints_2d).any(axis=1)]
-                    if len(valid_joints) > 0:
-                        min_x, min_y = valid_joints.min(axis=0)
-                        max_x, max_y = valid_joints.max(axis=0)
-                        center_x = (min_x + max_x) / 2
-                        center_y = (min_y + max_y) / 2
-                        print(f"[Motion Analyzer] Joint bounds: x=[{min_x:.1f}, {max_x:.1f}], y=[{min_y:.1f}, {max_y:.1f}]")
-                        print(f"[Motion Analyzer] Joint center: ({center_x:.1f}, {center_y:.1f})")
-                        print(f"[Motion Analyzer] Joint spread: {max_x - min_x:.1f}w x {max_y - min_y:.1f}h")
-                    
-                    # Sample some key joints to help identify the format
-                    print(f"[Motion Analyzer] Sample joints:")
-                    sample_indices = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50, 60]
-                    for idx in sample_indices:
-                        if idx < len(joints_2d):
-                            x, y = joints_2d[idx]
-                            print(f"[Motion Analyzer]   Joint {idx:2d}: ({x:7.1f}, {y:7.1f})")
-                    print(f"[Motion Analyzer] =============================================\n")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: Using pred_keypoints_2d DIRECTLY (shape={joints_2d.shape})")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: First 3 2D joints: {joints_2d[:3]}")
             else:
-                # Project 3D to 2D - use the same format as keypoints_3d
+                # Fallback: project 3D to 2D
                 joints_2d = project_points_to_2d(
                     keypoints_3d, focal, camera_t, image_size[0], image_size[1]
                 )
-                joints_2d_format = kp_source  # Same format as 3D source
+                joints_2d_format = kp_source
                 if i == 0:
-                    print(f"[Motion Analyzer] Frame 0: PROJECTING 3D→2D (focal={focal}, cam_t={camera_t})")
-                    print(f"[Motion Analyzer] Frame 0: First 3 projected joints: {joints_2d[:3]}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Frame 0: PROJECTING 3D→2D fallback (shape={joints_2d.shape})")
             
             # Store the 2D format on first frame
             if i == 0:
@@ -935,13 +918,13 @@ class SAM4DMotionAnalyzer:
         grounded_count = sum(1 for fc in subject_motion["foot_contact"] if fc in ["both", "left", "right"])
         airborne_count = sum(1 for fc in subject_motion["foot_contact"] if fc == "none")
         
-        print(f"\n[Motion Analyzer] ----- MOTION STATISTICS -----")
-        print(f"[Motion Analyzer] Frames: {num_frames}")
-        print(f"[Motion Analyzer] Avg 2D velocity: {avg_velocity_2d:.2f} px/frame")
-        print(f"[Motion Analyzer] Max 2D velocity: {max_velocity_2d:.2f} px/frame")
-        print(f"[Motion Analyzer] Grounded frames: {grounded_count} ({100*grounded_count/num_frames:.1f}%)")
-        print(f"[Motion Analyzer] Airborne frames: {airborne_count} ({100*airborne_count/num_frames:.1f}%)")
-        print(f"[Motion Analyzer] Depth range: {min(subject_motion['depth_estimate']):.2f}m - {max(subject_motion['depth_estimate']):.2f}m")
+        print(f"\n[{get_timestamp()}] [Motion Analyzer] ----- MOTION STATISTICS -----")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Frames: {num_frames}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Avg 2D velocity: {avg_velocity_2d:.2f} px/frame")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Max 2D velocity: {max_velocity_2d:.2f} px/frame")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Grounded frames: {grounded_count} ({100*grounded_count/num_frames:.1f}%)")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Airborne frames: {airborne_count} ({100*airborne_count/num_frames:.1f}%)")
+        print(f"[{get_timestamp()}] [Motion Analyzer] Depth range: {min(subject_motion['depth_estimate']):.2f}m - {max(subject_motion['depth_estimate']):.2f}m")
         
         # ===== DEBUG INFO STRING =====
         debug_info = (
@@ -958,7 +941,7 @@ class SAM4DMotionAnalyzer:
         
         # ===== DEBUG OVERLAY =====
         if show_debug and images is not None:
-            print(f"[Motion Analyzer] Generating debug overlay...")
+            print(f"[{get_timestamp()}] [Motion Analyzer] Generating debug overlay...")
             
             images_np = images.cpu().numpy() if isinstance(images, torch.Tensor) else images
             
@@ -980,7 +963,7 @@ class SAM4DMotionAnalyzer:
         else:
             debug_overlay = torch.zeros(1, 64, 64, 3)
         
-        print(f"[Motion Analyzer] =============================================\n")
+        print(f"[{get_timestamp()}] [Motion Analyzer] =============================================\n")
         
         return (subject_motion, scale_info, debug_overlay, debug_info)
 
