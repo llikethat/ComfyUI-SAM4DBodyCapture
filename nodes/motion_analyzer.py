@@ -18,6 +18,9 @@ Joint Index Reference:
 - This module uses 18-joint by default, 127-joint for full skeleton mode
 """
 
+# Version for logging
+VERSION = "0.5.0-debug8"
+
 import numpy as np
 import torch
 import cv2
@@ -569,7 +572,7 @@ class SAM4DMotionAnalyzer:
         """
         Analyze subject motion from mesh sequence.
         """
-        print("\n[Motion Analyzer] ========== SUBJECT MOTION ANALYSIS ==========")
+        print(f"\n[Motion Analyzer v{VERSION}] ========== SUBJECT MOTION ANALYSIS ==========")
         
         # Determine skeleton mode
         use_simple = skeleton_mode == "Simple Skeleton"

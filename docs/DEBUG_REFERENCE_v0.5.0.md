@@ -1,66 +1,136 @@
 # SAM4DBodyCapture v0.5.0 Debug Reference Document
 
-**Last Updated**: 2025-12-30 15:30 IST  
-**Current Version**: v0.5.0-debug7  
-**Status**: Testing - Major fix for joint indices and 2D/3D separation  
-**Working Reference**: SAM3DBody2abc implementation
+**Last Updated**: 2025-12-30 16:00 IST  
+**Current Version**: v0.5.0-debug8 (awaiting test)  
+**Status**: Fix based on working build comparison  
+**Working Reference**: v0.5.0 (mesh overlay correct)
+
+---
+
+## Quick Start for New Chat
+
+If continuing this work in a new chat:
+1. Upload this document
+2. Upload the latest debug build zip
+3. Upload `ComfyUI-SAM4DBodyCapture-v0_5_0.zip` (working mesh overlay reference)
+4. State: "Continue debugging SAM4DBodyCapture skeleton overlay alignment"
 
 ---
 
 ## Executive Summary
 
-The Motion Analyzer node in SAM4DBodyCapture v0.5.0 had skeleton and mesh overlay alignment issues caused by:
-1. Wrong joint indices (using MHR format instead of COCO format for pred_keypoints_2d)
-2. Incorrectly projecting joint_coords to 2D instead of using pred_keypoints_2d directly
+debug7 broke mesh overlay and skeleton because:
+1. **CRITICAL**: Removed `cam_int` parameter from `process_one_image()` call
+2. Changed joint indices from MHR format to COCO format (wrong assumption)
 
-**debug7 fixes these by:**
-- Using COCO format indices for pred_keypoints_2d (the correct format)
-- ALWAYS using pred_keypoints_2d for 2D visualization
-- Using SMPLH or COCO indices appropriately for 3D analysis only
+**debug8 fixes this by:**
+- Starting from working v0.5.0 build as base
+- Adding ONLY the autocast wrapper (bfloat16 fix)
+- Adding torch.no_grad() for inference
+- Keeping cam_int parameter intact
+- Keeping MHR format joint indices intact
+- Adding VERSION logging
 
 ---
 
-## Key Fix in debug7
+## Debug Version History
 
-### The Problem
-SAM3DBody outputs `pred_keypoints_2d` in **COCO format** (17 joints), NOT MHR format (18 joints).
+| Version | Changes | Result |
+|---------|---------|--------|
+| v0.5.0 | Original working build | ✅ Mesh overlay correct, skeleton not aligned |
+| debug3 | BFloat16 fix with autocast wrapper | ✅ No CUDA errors |
+| debug4 | Joint index fix for SMPLH format | ❌ Skeleton scattered |
+| debug5 | Project joint_coords to 2D | ❌ Skeleton at BOTTOM |
+| debug6 | Y negation for SMPLH | ❌ Skeleton at TOP |
+| debug7 | COCO indices + removed cam_int | ❌ Both mesh and skeleton broken |
+| **debug8** | **Restore working + add autocast only** | ⏳ Awaiting test |
 
-**COCO joint indices** (correct):
-```
-NOSE = 0, LEFT_EYE = 1, RIGHT_EYE = 2, LEFT_EAR = 3, RIGHT_EAR = 4
-LEFT_SHOULDER = 5, RIGHT_SHOULDER = 6, LEFT_ELBOW = 7, RIGHT_ELBOW = 8
-LEFT_WRIST = 9, RIGHT_WRIST = 10, LEFT_HIP = 11, RIGHT_HIP = 12
-LEFT_KNEE = 13, RIGHT_KNEE = 14, LEFT_ANKLE = 15, RIGHT_ANKLE = 16
-```
+---
 
-**What we had wrong** (MHR indices):
-```
-PELVIS = 0, LEFT_ANKLE = 14, RIGHT_ANKLE = 17  ← WRONG!
-```
+## Critical Differences Found (debug7 vs working v0.5.0)
 
-### The Solution (debug7)
+### 1. Missing cam_int Parameter (THE ROOT CAUSE)
 
-1. **Created COCOJoints class** with correct COCO format indices
-2. **Separated 2D and 3D indices**:
-   - 2D indices: Always COCO (for pred_keypoints_2d visualization)
-   - 3D indices: COCO or SMPLH based on skeleton mode (for analysis)
-3. **Always use pred_keypoints_2d for 2D** - never project joint_coords
-
+**Working v0.5.0:**
 ```python
-# 2D indices - ALWAYS COCO format (pred_keypoints_2d)
-pelvis_idx_2d = COCOJoints.PELVIS      # 11 (left hip as proxy)
-head_idx_2d = COCOJoints.HEAD          # 0 (nose)
-left_ankle_idx_2d = COCOJoints.LEFT_ANKLE   # 15
-right_ankle_idx_2d = COCOJoints.RIGHT_ANKLE  # 16
-
-# 3D indices - depends on kp_source
-if kp_source == "keypoints_3d":
-    # COCO format for pred_keypoints_3d
-    left_ankle_idx_3d = COCOJoints.LEFT_ANKLE  # 15
-else:
-    # SMPLH format for joint_coords
-    left_ankle_idx_3d = SMPLHJoints.LEFT_ANKLE  # 7
+outputs = estimator.process_one_image(
+    tmp_path,
+    bboxes=bbox,
+    masks=mask_np,
+    cam_int=cam_int_tensor,  # ← CRITICAL: Passes camera intrinsics
+    bbox_thr=0.5,
+    use_mask=True,
+    inference_type=inference_type,
+)
 ```
+
+**debug7 (BROKEN):**
+```python
+outputs = estimator.process_one_image(
+    tmp_path,
+    bboxes=bbox,
+    masks=mask_np,
+    bbox_thr=0.5,  # ← cam_int REMOVED!
+    ...
+)
+```
+
+**Impact**: Without cam_int, SAM3DBody uses default camera → wrong pred_cam_t → wrong mesh projection
+
+### 2. Wrong Joint Indices
+
+**Working (correct - MHR format):**
+```python
+PELVIS = 0, HEAD = 5, LEFT_ANKLE = 14, RIGHT_ANKLE = 17
+```
+
+**debug7 (wrong - assumed COCO):**
+```python
+NOSE = 0, HEAD = 0, LEFT_ANKLE = 15, RIGHT_ANKLE = 16
+```
+
+---
+
+## What debug8 Does
+
+1. **Starts from working v0.5.0** as the base
+2. **Adds autocast wrapper** for bfloat16 fix:
+   ```python
+   with torch.cuda.amp.autocast(enabled=False):
+       # entire processing loop
+   ```
+3. **Adds torch.no_grad()** around process_one_image for inference efficiency
+4. **Keeps cam_int parameter** intact
+5. **Keeps MHR joint indices** intact
+6. **Adds VERSION constant** for logging
+
+---
+
+## Expected Log Output (debug8)
+
+```
+[SAM4DBodyCapture v0.5.0-debug8] Processing 50 frames through SAM3DBody...
+...
+[Motion Analyzer v0.5.0-debug8] ========== SUBJECT MOTION ANALYSIS ==========
+```
+
+---
+
+## Key Files
+
+- motion_analyzer.py: MHR joint indices (PELVIS=0, LEFT_ANKLE=14, RIGHT_ANKLE=17)
+- sam3dbody_integration.py: cam_int passed to process_one_image, autocast wrapper
+- mesh_overlay.py: UNCHANGED from working build
+
+---
+
+## Test Verification
+
+After installing debug8:
+1. Mesh overlay (cyan) should align with person's body
+2. Skeleton dots should be ON the person (not scattered)
+3. No bfloat16/sparse CUDA errors
+4. Logs should show version "v0.5.0-debug8"
 
 ---
 
