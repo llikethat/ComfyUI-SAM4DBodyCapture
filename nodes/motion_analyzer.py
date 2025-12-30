@@ -894,6 +894,9 @@ class SAM4DMotionAnalyzer:
             
             images_np = images.cpu().numpy() if isinstance(images, torch.Tensor) else images
             
+            # Convert skeleton_mode to short form for overlay function
+            skeleton_mode_str = "simple" if skeleton_mode == "Simple Skeleton" else "full"
+            
             overlay = create_motion_debug_overlay(
                 images_np,
                 subject_motion,
