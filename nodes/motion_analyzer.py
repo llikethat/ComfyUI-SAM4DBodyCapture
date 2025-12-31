@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug10"
+VERSION = "0.5.0-debug11"
 
 import numpy as np
 import torch
@@ -373,8 +373,9 @@ def create_motion_debug_overlay(
     """
     Create debug visualization with joint markers overlaid on video.
     
-    debug10: Projects joint_coords (3D) → 2D using same method as mesh overlay.
-    This ensures skeleton joints align with mesh overlay.
+    debug11: Uses pred_keypoints_2d directly (already in pixel coordinates).
+    The joints_2d data in subject_motion comes from pred_keypoints_2d which
+    is already properly aligned with the video frame.
     
     Uses unified BodyJoints indices (same for all SAM3DBody outputs).
     Only individual joint dots are shown - no skeleton lines since
@@ -526,10 +527,16 @@ class SAM4DMotionAnalyzer:
     - Foot contact detection (both/left/right/none)
     - Apparent height in pixels (depth indicator)
     
-    debug10 Changes:
-    - Always projects joint_coords (3D) → 2D using same method as mesh overlay
-    - Uses unified BodyJoints indices (same as mesh overlay)
-    - No longer uses pred_keypoints_2d (was causing misalignment)
+    debug11 Changes (CRITICAL FIX):
+    - Use pred_keypoints_2d DIRECTLY (already in pixel coords) for 2D overlay
+    - Do NOT project joint_coords - it's in LOCAL body space, not world space!
+    - Fallback: project pred_keypoints_3d (18-joint world space) if 2D unavailable
+    - Uses unified BodyJoints indices (same indices work for all data sources)
+    
+    Data Sources:
+    - pred_keypoints_2d: 70 joints, already in pixel coordinates (USE THIS FOR 2D!)
+    - pred_keypoints_3d: 18 joints, world space coordinates
+    - joint_coords: 127 joints, LOCAL body space (NOT for 2D projection!)
     
     Skeleton Modes:
     - "Simple Skeleton" (default): Uses 18-joint keypoints
@@ -781,7 +788,7 @@ class SAM4DMotionAnalyzer:
             subject_motion["camera_t"].append(camera_t.copy())
             subject_motion["focal_length"].append(float(focal))
             
-            # Get 3D keypoints
+            # Get 3D keypoints for analysis (height estimation, foot contact, etc.)
             if kp_source == "keypoints_3d":
                 keypoints_3d = to_numpy(keypoints_3d_list[i]) if i < len(keypoints_3d_list) else None
             else:
@@ -795,16 +802,52 @@ class SAM4DMotionAnalyzer:
             if keypoints_3d.ndim == 3:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
-            # debug10: ALWAYS project 3D keypoints to 2D using same method as mesh overlay
-            # This ensures skeleton overlay aligns with mesh overlay
-            joints_2d = project_points_to_2d(
-                keypoints_3d, focal, camera_t, image_size[0], image_size[1]
-            )
-            joints_2d_source = f"projected from {kp_source} (debug10)"
+            # ===== GET 2D JOINTS FOR VISUALIZATION =====
+            # debug10 fix: joint_coords is in LOCAL body space, NOT world space!
+            # For 2D overlay, we must use either:
+            # 1. pred_keypoints_2d directly (already in pixel coords) - BEST
+            # 2. Project pred_keypoints_3d (18-joint world coords) - FALLBACK
+            # Do NOT project joint_coords - it's local/relative coordinates!
             
-            if i == 0:
-                print(f"[{get_timestamp()}] [Motion Analyzer] debug10: Projecting {kp_source} (3D) → 2D")
-                print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
+            if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
+                # BEST: Use pred_keypoints_2d directly - already in pixel coordinates
+                keypoints_2d = to_numpy(keypoints_2d_list[i])
+                if keypoints_2d.ndim == 3:
+                    keypoints_2d = keypoints_2d.squeeze(0)
+                # Take only x,y (might have confidence as 3rd column)
+                if keypoints_2d.shape[1] >= 2:
+                    joints_2d = keypoints_2d[:, :2]
+                else:
+                    joints_2d = keypoints_2d
+                joints_2d_source = "pred_keypoints_2d (direct pixel coords)"
+                
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug10: Using pred_keypoints_2d directly (already in pixel coords)")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] pred_keypoints_2d shape: {joints_2d.shape}")
+                    
+            elif has_kp_3d and i < len(keypoints_3d_list) and keypoints_3d_list[i] is not None:
+                # FALLBACK: Project pred_keypoints_3d (18-joint world space) to 2D
+                kp3d_for_projection = to_numpy(keypoints_3d_list[i])
+                if kp3d_for_projection.ndim == 3:
+                    kp3d_for_projection = kp3d_for_projection.squeeze(0)
+                    
+                joints_2d = project_points_to_2d(
+                    kp3d_for_projection, focal, camera_t, image_size[0], image_size[1]
+                )
+                joints_2d_source = f"projected from keypoints_3d (18-joint world coords)"
+                
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug10: Projecting keypoints_3d (world space) → 2D")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
+            else:
+                # LAST RESORT: Use center of image as fallback
+                joints_2d = np.zeros((22, 2))
+                joints_2d[:, 0] = image_size[0] / 2
+                joints_2d[:, 1] = image_size[1] / 2
+                joints_2d_source = "fallback (no 2D data available)"
+                
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 2D keypoint data available!")
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
@@ -824,7 +867,7 @@ class SAM4DMotionAnalyzer:
             
             # Pelvis position - use unified indices for both 2D and 3D
             pelvis_3d = keypoints_3d[pelvis_idx] * scale_factor
-            pelvis_2d = joints_2d[pelvis_idx]
+            pelvis_2d = joints_2d[pelvis_idx] if pelvis_idx < len(joints_2d) else joints_2d[0]
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
@@ -839,9 +882,9 @@ class SAM4DMotionAnalyzer:
                 subject_motion["body_world_3d"].append(None)
             
             # Apparent height (pixels) - use unified indices
-            head_2d = joints_2d[head_idx]
-            left_ankle_2d = joints_2d[left_ankle_idx]
-            right_ankle_2d = joints_2d[right_ankle_idx]
+            head_2d = joints_2d[head_idx] if head_idx < len(joints_2d) else joints_2d[0]
+            left_ankle_2d = joints_2d[left_ankle_idx] if left_ankle_idx < len(joints_2d) else joints_2d[0]
+            right_ankle_2d = joints_2d[right_ankle_idx] if right_ankle_idx < len(joints_2d) else joints_2d[0]
             feet_y = max(left_ankle_2d[1], right_ankle_2d[1])
             apparent_height = abs(feet_y - head_2d[1])
             subject_motion["apparent_height"].append(apparent_height)

@@ -1,8 +1,8 @@
 # SAM4DBodyCapture v0.5.0 Debug Reference Document
 
-**Last Updated**: 2025-12-30 19:00 IST  
-**Current Version**: v0.5.0-debug10 (COMPLETE)  
-**Status**: Implemented unified BodyJoints + joint_coords projection  
+**Last Updated**: 2025-12-30 19:30 IST  
+**Current Version**: v0.5.0-debug11 (CRITICAL FIX)  
+**Status**: Fixed - use pred_keypoints_2d directly for 2D overlay  
 **Reference**: SAM3DBody MHR 70-Joint / 127-Joint structure
 
 ---
@@ -12,7 +12,7 @@
 If continuing this work in a new chat:
 1. Upload this document
 2. Upload the latest debug build zip (or source)
-3. State: "Continue implementing debug10 for SAM4DBodyCapture skeleton overlay"
+3. State: "Continue implementing SAM4DBodyCapture skeleton overlay"
 
 ---
 
@@ -20,16 +20,16 @@ If continuing this work in a new chat:
 
 **Problem**: Skeleton overlay joints not aligning with person in video (mesh overlay works fine)
 
-**Root Cause Discovered**: 
-1. We were using WRONG joint indices (from SAM3DBody2abc verify_overlay.py which was incorrect)
-2. We were using `pred_keypoints_2d` directly instead of projecting `joint_coords` like mesh does
-3. Missing Y/Z negation (180° X rotation) in projection function
+**Root Causes Discovered**:
+1. Wrong joint indices (from incorrect reference file)
+2. debug10 tried to project `joint_coords` which is in LOCAL body space, NOT world space!
+3. `joint_coords` contains relative joint positions, not absolute 3D coordinates
 
-**Solution (debug10) - IMPLEMENTED**:
-1. ✅ Use correct **unified BodyJoints** class with proper indices
-2. ✅ Project `joint_coords` (3D) → 2D using same camera intrinsics as mesh
-3. ✅ Apply Y/Z negation (same as mesh_overlay.py fallback)
-4. ✅ Use `body_world` (index 0) for global trajectory tracking
+**Solution (debug11) - IMPLEMENTED**:
+1. ✅ Use `pred_keypoints_2d` DIRECTLY (already in pixel coordinates!)
+2. ✅ Do NOT project `joint_coords` - it's local body space
+3. ✅ Fallback: project `pred_keypoints_3d` (18-joint world space) if 2D unavailable
+4. ✅ Use unified BodyJoints indices
 
 ---
 
@@ -93,85 +93,77 @@ class MHRJoints:
 
 ---
 
-## debug10 Implementation - COMPLETE
+## CRITICAL Understanding: SAM3DBody Data Sources
 
-### 1. Unified BodyJoints Class (✅ DONE)
-```python
-class BodyJoints:
-    BODY_WORLD = 0   # Global trajectory
-    PELVIS = 1
-    SPINE_1 = 2
-    SPINE_2 = 3
-    NECK = 4
-    HEAD = 5         # ← Correct!
-    L_HIP = 6
-    L_KNEE = 7
-    L_ANKLE = 8      # ← Correct!
-    R_HIP = 9
-    R_KNEE = 10
-    R_ANKLE = 11     # ← Correct!
-    L_FOOT_HEEL = 12
-    L_FOOT_TOE = 13
-    R_FOOT_HEEL = 14
-    R_FOOT_TOE = 15
-    L_SHOULDER = 16
-    L_ELBOW = 17
-    L_WRIST = 18
-    R_SHOULDER = 19
-    R_ELBOW = 20
-    R_WRIST = 21
-    
-    # Backward-compatible aliases
-    LEFT_HIP = L_HIP
-    LEFT_KNEE = L_KNEE
-    LEFT_ANKLE = L_ANKLE
-    RIGHT_HIP = R_HIP
-    # ... etc
-```
+### The Three Data Sources (from SAM3DBody output)
 
-### 2. Projection Method (✅ DONE)
-```python
-# Fixed to match mesh_overlay.py exactly
-def project_points_to_2d(points_3d, focal_length, cam_t, image_width, image_height):
-    # 1. Apply camera translation
-    X = points_3d[:, 0] + cam_t[0]
-    Y = points_3d[:, 1] + cam_t[1]
-    Z = points_3d[:, 2] + cam_t[2]
-    
-    # 2. Apply 180° rotation around X axis (CRITICAL!)
-    Y = -Y
-    Z = -Z
-    
-    # 3. Perspective projection
-    x_2d = focal_length * X / Z + cx
-    y_2d = focal_length * Y / Z + cy
-    
-    return np.stack([x_2d, y_2d], axis=1)
-```
+| Data Source | Joints | Coordinate Space | Use For |
+|-------------|--------|------------------|---------|
+| `pred_keypoints_2d` | 70 | **Pixel coords (already 2D!)** | **2D overlay - USE THIS!** |
+| `pred_keypoints_3d` | 18 | World space (3D) | Height estimation, 3D analysis |
+| `joint_coords` | 127 | **LOCAL body space** | Rigging, NOT for 2D projection! |
 
-### 3. analyze() Function (✅ DONE)
-- Always projects joint_coords (3D) → 2D
-- Removed pred_keypoints_2d usage
-- Uses unified indices for both 2D and 3D
+### Why debug10 Failed
 
-### 4. create_motion_debug_overlay() (✅ DONE)
-- Uses unified BodyJoints indices
-- Draws joints at projected 2D positions
+debug10 tried to project `joint_coords` to 2D. But `joint_coords` contains:
+- Relative joint positions in local body space
+- Values like 0.088 units for "leg length" (should be ~0.9m)
+- All joints clustered in a tiny area when projected
+
+### Why Mesh Overlay Works
+
+The mesh overlay projects **vertices** which are in world space after SMPL transformation.
+The skeleton overlay should use **pred_keypoints_2d** which is already in pixel coordinates!
 
 ---
 
-## Files Modified in debug10
+## debug11 Implementation - COMPLETE
+
+### 1. Data Source Priority (✅ DONE)
+```python
+# Priority for 2D visualization:
+if has_kp_2d:
+    # BEST: Use pred_keypoints_2d directly - already in pixel coords!
+    joints_2d = keypoints_2d[:, :2]
+elif has_kp_3d:
+    # FALLBACK: Project pred_keypoints_3d (world space) to 2D
+    joints_2d = project_points_to_2d(keypoints_3d_list[i], ...)
+else:
+    # LAST RESORT: Center of image
+    joints_2d = np.zeros((22, 2))
+```
+
+### 2. Unified BodyJoints Indices (✅ DONE)
+```python
+class BodyJoints:
+    BODY_WORLD = 0   # Global trajectory (index 0)
+    PELVIS = 1       # Anatomical root
+    HEAD = 5         # Top of head
+    L_ANKLE = 8      # Left ankle
+    R_ANKLE = 11     # Right ankle
+    # ... etc
+```
+
+### 3. Key Insight
+- `pred_keypoints_2d` is 70 joints (MHR format)
+- First 22 joints (0-21) are body joints
+- Indices match BodyJoints class
+- NO projection needed - already in pixel coordinates!
+
+---
+
+## Files Modified in debug11
 
 1. **nodes/motion_analyzer.py** (✅ COMPLETE)
-   - [x] Added backward-compatible aliases (LEFT_ANKLE, RIGHT_ANKLE, etc.)
-   - [x] Fixed project_points_to_2d() to apply Y/Z negation
-   - [x] Updated analyze_subject_motion() to always project joint_coords
-   - [x] Updated create_motion_debug_overlay() to use unified indices
-   - [x] Removed pred_keypoints_2d usage for skeleton overlay
+   - [x] Use pred_keypoints_2d directly for 2D overlay (no projection!)
+   - [x] Fallback to project pred_keypoints_3d if 2D unavailable
+   - [x] Do NOT project joint_coords (it's local body space)
+   - [x] Unified BodyJoints indices with backward-compatible aliases
+   - [x] Proper bounds checking for index access
 
 2. **docs/DEBUG_REFERENCE_v0.5.0.md** (this file)
-   - [x] Document correct joint structure
-   - [x] Document implementation completion
+   - [x] Document correct data source understanding
+   - [x] Document debug11 fix
 
 ---
 
@@ -183,7 +175,8 @@ def project_points_to_2d(points_3d, focal_length, cam_t, image_width, image_heig
 | debug7 | Removed cam_int | ❌ | ❌ |
 | debug8 | Restore cam_int + COCO | ✅ | ❌ |
 | debug9 | Wrong MHR indices + pred_keypoints_2d | ✅ | ❌ |
-| **debug10** | **Unified BodyJoints + joint_coords projection + Y/Z negation** | ✅ | ✅ Expected |
+| debug10 | Unified BodyJoints + project joint_coords | ✅ | ❌ (joint_coords is local space!) |
+| **debug11** | **Use pred_keypoints_2d directly (pixel coords)** | ✅ | ✅ Expected |
 
 ---
 
@@ -210,30 +203,34 @@ This should have actual values for global position.
 
 ---
 
-## Expected Result After debug10
+## Expected Result After debug11
 
 ### Console Output (Expected)
 ```
-[2025-12-30 19:00:00 IST] [Motion Analyzer] debug10: Using unified BodyJoints indices
-[2025-12-30 19:00:00 IST] [Motion Analyzer] Indices: pelvis=1, head=5, L_ankle=8, R_ankle=11
-[2025-12-30 19:00:00 IST] [Motion Analyzer] debug10: Projecting joint_coords (3D) → 2D
-[2025-12-30 19:00:00 IST] [Motion Analyzer] Projection: focal=623.5px, cam_t=[x, y, z]
+[Motion Analyzer] debug10: Using unified BodyJoints indices
+[Motion Analyzer] Indices: pelvis=1, head=5, L_ankle=8, R_ankle=11
+[Motion Analyzer] debug10: Using pred_keypoints_2d directly (already in pixel coords)
+[Motion Analyzer] pred_keypoints_2d shape: (70, 2)
 [Motion Analyzer] ===== JOINT POSITIONS (Frame 0) =====
-[Motion Analyzer] joints_2d shape: (127, 2) or (70, 2)
-[Motion Analyzer] joints_2d source: projected from joint_coords (debug10)
+[Motion Analyzer] joints_2d shape: (70, 2)
+[Motion Analyzer] joints_2d source: pred_keypoints_2d (direct pixel coords)
 [Motion Analyzer] Image size: 720x1280
 [Motion Analyzer] --- Body Joints (unified indices 0-21) ---
 [Motion Analyzer]   [ 0] body_world: x=  360.0, y=  640.0  (center - global root)
-[Motion Analyzer]   [ 1] pelvis    : x=  365.0, y=  650.0
-[Motion Analyzer]   [ 5] head      : x=  370.0, y=  430.0  ← Near top!
-[Motion Analyzer]   [ 8] L_ankle   : x=  340.0, y= 1050.0  ← Near bottom!
-[Motion Analyzer]   [11] R_ankle   : x=  380.0, y= 1040.0  ← Near bottom!
+[Motion Analyzer]   [ 1] pelvis    : x=  365.0, y=  750.0  ← Mid-body
+[Motion Analyzer]   [ 5] head      : x=  370.0, y=  450.0  ← Near TOP of person!
+[Motion Analyzer]   [ 8] L_ankle   : x=  340.0, y= 1050.0  ← Near BOTTOM of person!
+[Motion Analyzer]   [11] R_ankle   : x=  380.0, y= 1040.0  ← Near BOTTOM of person!
 ```
+
+### Key Difference from debug10
+- debug10: All joints clustered at y=1070-1096 (17px range) ❌
+- debug11: Joints spread from y~450 (head) to y~1050 (feet) (~600px range) ✅
 
 ### Visual Result (Expected)
 - Skeleton joints aligned with body parts
-- Head joint (yellow, idx 5) near person's head
-- Ankle joints (orange, idx 8/11) near person's feet
+- Head joint (yellow, idx 5) near person's head (top of frame)
+- Ankle joints (orange, idx 8/11) near person's feet (bottom of frame)
 - Pelvis (green, idx 1) at person's waist/hip area
 - Same alignment as mesh overlay
 
