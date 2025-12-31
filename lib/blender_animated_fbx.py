@@ -61,6 +61,59 @@ def clear_scene():
         bpy.data.cameras.remove(cam)
 
 
+def create_metadata_locator(metadata):
+    """
+    Create an Empty object with metadata as custom properties.
+    
+    These custom properties will be exported to FBX and visible
+    in Maya's Extra Attributes when use_custom_properties=True.
+    
+    Args:
+        metadata: Dict containing metadata (can have nested dicts)
+        
+    Returns:
+        The created Empty object with custom properties
+    """
+    if not metadata:
+        return None
+    
+    # Create an Empty at origin
+    bpy.ops.object.empty_add(type='PLAIN_AXES', location=(0, 0, 0))
+    empty = bpy.context.active_object
+    empty.name = "SAM4D_Metadata"
+    empty.empty_display_size = 0.1  # Small display size
+    
+    def add_properties(obj, data, prefix=""):
+        """Recursively add properties, flattening nested dicts."""
+        for key, value in data.items():
+            prop_name = f"{prefix}{key}" if prefix else key
+            
+            if isinstance(value, dict):
+                # Flatten nested dict with underscore separator
+                add_properties(obj, value, f"{prop_name}_")
+            elif isinstance(value, (list, tuple)):
+                # Convert lists to strings for FBX compatibility
+                obj[prop_name] = str(value)
+            elif isinstance(value, bool):
+                # Booleans as integers for better compatibility
+                obj[prop_name] = 1 if value else 0
+            elif isinstance(value, (int, float, str)):
+                obj[prop_name] = value
+            else:
+                # Fallback: convert to string
+                obj[prop_name] = str(value)
+    
+    add_properties(empty, metadata)
+    
+    # Log what was added
+    print(f"[Blender] Created metadata locator with {len(empty.keys())} properties:")
+    for key in sorted(empty.keys()):
+        if not key.startswith("_"):  # Skip internal properties
+            print(f"[Blender]   {key}: {empty[key]}")
+    
+    return empty
+
+
 def get_transform_for_axis(up_axis, flip_x=False):
     """
     Get coordinate transformation based on desired up axis.
@@ -1428,6 +1481,7 @@ def export_fbx(output_path, axis_forward, axis_up):
         bake_anim_force_startend_keying=True,
         bake_anim_step=1.0,
         bake_anim_simplify_factor=0.0,
+        use_custom_props=True,  # *** Export custom properties for Maya Extra Attributes ***
     )
     print(f"[Blender] FBX export complete")
 
@@ -1511,6 +1565,7 @@ def main():
     camera_static = data.get("camera_static", False)  # Disable all camera animation
     camera_smoothing = data.get("camera_smoothing", 0)  # Smoothing window for camera animation
     solved_camera_rotations = data.get("solved_camera_rotations", None)  # From Camera Rotation Solver
+    metadata = data.get("metadata", {})  # Metadata for FBX custom properties
     
     print(f"[Blender] {len(frames)} frames at {fps} fps")
     print(f"[Blender] Frame offset: {frame_offset} (animation runs from frame {frame_offset} to {frame_offset + len(frames) - 1})")
@@ -1525,6 +1580,7 @@ def main():
     print(f"[Blender] Camera smoothing: {camera_smoothing}")
     print(f"[Blender] Solved camera rotations: {len(solved_camera_rotations) if solved_camera_rotations else 0} frames")
     print(f"[Blender] Joint parents available: {joint_parents is not None}")
+    print(f"[Blender] Metadata available: {len(metadata)} keys" if metadata else "[Blender] Metadata: None")
     
     if not frames:
         print("[Blender] Error: No frames")
@@ -1544,6 +1600,12 @@ def main():
     transform_func, axis_forward, axis_up_export = get_transform_for_axis(up_axis, flip_x)
     
     clear_scene()
+    
+    # Create metadata locator with custom properties (will appear in Maya Extra Attributes)
+    metadata_locator = None
+    if metadata:
+        print(f"[Blender] Creating metadata locator...")
+        metadata_locator = create_metadata_locator(metadata)
     
     # Set scene frame range with offset
     bpy.context.scene.render.fps = int(fps)

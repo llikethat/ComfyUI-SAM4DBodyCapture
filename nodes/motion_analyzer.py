@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug13"
+VERSION = "0.5.0-debug14"
 
 import numpy as np
 import torch
@@ -876,7 +876,8 @@ class SAM4DMotionAnalyzer:
         subject_motion = {
             "pelvis_2d": [],
             "pelvis_3d": [],
-            "body_world_3d": [],  # Global trajectory from joint_coords[0]
+            "body_world_3d": [],  # Global trajectory from joint_coords[0] (usually zeros)
+            "camera_t_trajectory": [],  # Camera translation per frame (actual world trajectory)
             "joints_2d": [],
             "joints_3d": [],
             "velocity_2d": [],
@@ -993,7 +994,8 @@ class SAM4DMotionAnalyzer:
                 print(f"[{get_timestamp()}] [Motion Analyzer] ========================================")
                 
                 # ===== PROJECTION COMPARISON (Frame 0) =====
-                # Compare ground truth (pred_keypoints_2d) vs our projection of pred_keypoints_3d
+                # Compare ground truth (pred_keypoints_2d) vs different projection formulas
+                # This helps identify the correct projection for pred_keypoints_3d
                 if has_kp_2d and has_kp_3d:
                     gt_2d = to_numpy(keypoints_2d_list[0])
                     kp_3d = to_numpy(keypoints_3d_list[0])
@@ -1004,22 +1006,89 @@ class SAM4DMotionAnalyzer:
                     if gt_2d.shape[1] >= 2:
                         gt_2d = gt_2d[:, :2]
                     
-                    # Project 3D keypoints using our function
+                    cx = image_size[0] / 2.0
+                    cy = image_size[1] / 2.0
+                    tx, ty, tz = camera_t[0], camera_t[1], camera_t[2]
+                    
+                    # Test multiple projection formulas
+                    def project_formula_A(pts):
+                        """Current formula: translate + 180° X rotation"""
+                        X = pts[:, 0] + tx
+                        Y = -(pts[:, 1] + ty)  # Negate Y
+                        Z = -(pts[:, 2] + tz)  # Negate Z
+                        Z = np.where(np.abs(Z) < 0.1, 0.1, Z)
+                        return np.stack([focal * X / Z + cx, focal * Y / Z + cy], axis=1)
+                    
+                    def project_formula_B(pts):
+                        """Simple perspective: translate only, no rotation"""
+                        X = pts[:, 0] + tx
+                        Y = pts[:, 1] + ty
+                        Z = pts[:, 2] + tz
+                        Z = np.where(np.abs(Z) < 0.1, 0.1, Z)
+                        return np.stack([focal * X / Z + cx, focal * Y / Z + cy], axis=1)
+                    
+                    def project_formula_C(pts):
+                        """Weak perspective (orthographic-like)"""
+                        s = focal / tz  # Scale factor based on depth
+                        X = pts[:, 0] * s + cx + tx * s
+                        Y = pts[:, 1] * s + cy + ty * s
+                        return np.stack([X, Y], axis=1)
+                    
+                    def project_formula_D(pts):
+                        """MHR-style: weak perspective with pred_cam_t as [s, tx, ty]"""
+                        # In MHR, pred_cam_t might be [scale, tx_2d, ty_2d]
+                        # where tx_2d, ty_2d are already in pixel space
+                        s = tz  # Assume tz is actually scale
+                        X = pts[:, 0] * s * focal + cx + tx * focal
+                        Y = pts[:, 1] * s * focal + cy + ty * focal
+                        return np.stack([X, Y], axis=1)
+                    
+                    print(f"[DEBUG] ========== PROJECTION COMPARISON (Frame 0) ==========")
+                    print(f"[DEBUG] Image size: {image_size[0]}x{image_size[1]}, Focal: {focal:.1f}px")
+                    print(f"[DEBUG] pred_cam_t: tx={tx:.4f}, ty={ty:.4f}, tz={tz:.4f}")
+                    print(f"[DEBUG] Ground truth: pred_keypoints_2d ({gt_2d.shape[0]} joints)")
+                    print(f"[DEBUG] 3D source: pred_keypoints_3d ({kp_3d.shape[0]} joints)")
+                    
+                    # Test each formula
+                    formulas = [
+                        ("A: translate+180°rot", project_formula_A),
+                        ("B: translate only", project_formula_B),
+                        ("C: weak perspective", project_formula_C),
+                        ("D: MHR-style", project_formula_D),
+                    ]
+                    
+                    best_formula = None
+                    best_error = float('inf')
+                    
+                    print(f"[DEBUG]")
+                    print(f"[DEBUG] Testing projection formulas:")
+                    
+                    for name, func in formulas:
+                        try:
+                            proj = func(kp_3d)
+                            errors = np.sqrt(np.sum((proj[:18] - gt_2d[:18])**2, axis=1))
+                            avg_error = np.mean(errors)
+                            print(f"[DEBUG]   {name}: avg error = {avg_error:.1f}px")
+                            if avg_error < best_error:
+                                best_error = avg_error
+                                best_formula = name
+                        except Exception as e:
+                            print(f"[DEBUG]   {name}: ERROR - {e}")
+                    
+                    print(f"[DEBUG]")
+                    print(f"[DEBUG] Best formula: {best_formula} (error: {best_error:.1f}px)")
+                    
+                    # Show detailed comparison for best formula (or current if all fail)
                     projected_2d = project_points_to_2d(
                         kp_3d, focal, camera_t, image_size[0], image_size[1]
                     )
                     
-                    print(f"[DEBUG] ========== PROJECTION COMPARISON (Frame 0) ==========")
-                    print(f"[DEBUG] Image size: {image_size[0]}x{image_size[1]}, Focal: {focal:.1f}px")
-                    print(f"[DEBUG] pred_cam_t: tx={camera_t[0]:.4f}, ty={camera_t[1]:.4f}, tz={camera_t[2]:.4f}")
-                    print(f"[DEBUG] Ground truth: pred_keypoints_2d ({gt_2d.shape[0]} joints)")
-                    print(f"[DEBUG] 3D source: pred_keypoints_3d ({kp_3d.shape[0]} joints)")
                     print(f"[DEBUG]")
-                    print(f"[DEBUG] Joint | Ground Truth (x,y) | Our Projection (x,y) | Diff (dx, dy)")
-                    print(f"[DEBUG] ------|-------------------|---------------------|---------------")
+                    print(f"[DEBUG] Joint | Ground Truth (x,y) | Current Proj (x,y) | Diff (dx, dy)")
+                    print(f"[DEBUG] ------|-------------------|-------------------|---------------")
                     
                     total_dx, total_dy = 0.0, 0.0
-                    num_compared = min(len(gt_2d), len(projected_2d), 18)  # Compare first 18 body joints
+                    num_compared = min(len(gt_2d), len(projected_2d), 10)  # First 10 joints
                     
                     for j in range(num_compared):
                         gt_x, gt_y = gt_2d[j][0], gt_2d[j][1]
@@ -1030,15 +1099,10 @@ class SAM4DMotionAnalyzer:
                         total_dy += dy
                         print(f"[DEBUG]   {j:3d}  | ({gt_x:7.1f},{gt_y:7.1f}) | ({proj_x:7.1f},{proj_y:7.1f}) | ({dx:+6.1f}, {dy:+6.1f})")
                     
-                    print(f"[DEBUG] ------|-------------------|---------------------|---------------")
+                    print(f"[DEBUG] ------|-------------------|-------------------|---------------")
                     avg_dx = total_dx / num_compared if num_compared > 0 else 0
                     avg_dy = total_dy / num_compared if num_compared > 0 else 0
                     print(f"[DEBUG] AVERAGE OFFSET: dx={avg_dx:+.1f}px, dy={avg_dy:+.1f}px")
-                    
-                    if abs(avg_dx) < 5 and abs(avg_dy) < 5:
-                        print(f"[DEBUG] ✓ Projection formula appears CORRECT!")
-                    else:
-                        print(f"[DEBUG] ✗ Projection has significant offset - check formula")
                     print(f"[DEBUG] ==========================================================")
             
             # Pelvis position - use 2D indices for 2D, 3D indices for 3D
@@ -1047,24 +1111,40 @@ class SAM4DMotionAnalyzer:
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
-            # Body world (global trajectory) - index 0 in SMPLH format
-            if track_body_world and len(keypoints_3d) >= 22:
-                # Use get_global_trajectory_point for cleaner extraction
+            # Body world (global trajectory)
+            # NOTE: In SMPLH, joint_coords[0] (body_world) is typically zeros because
+            # the body is at origin. The actual world trajectory comes from pred_cam_t
+            # (camera translation), which represents camera position relative to body.
+            # Body world position = -pred_cam_t (inverse of camera offset)
+            if track_body_world:
+                # Track both body_world (usually zeros) and camera_t (actual trajectory)
                 body_world_3d = get_global_trajectory_point(mesh_sequence, i)
                 if body_world_3d is not None:
                     body_world_3d = body_world_3d * scale_factor
-                    subject_motion["body_world_3d"].append(body_world_3d.copy())
-                    # Log body_world position for first frame
-                    if i == 0:
-                        print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0] (global trajectory): X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
                 else:
-                    # Fallback to direct access if function returns None
-                    body_world_3d = keypoints_3d[SMPLHJoints.BODY_WORLD] * scale_factor
-                    subject_motion["body_world_3d"].append(body_world_3d.copy())
+                    body_world_3d = np.zeros(3)
+                
+                subject_motion["body_world_3d"].append(body_world_3d.copy())
+                
+                # Also track camera_t as the effective world trajectory
+                # The body's world position ≈ -camera_t (body at origin, camera moves)
+                if i < len(camera_t_list) and camera_t_list[i] is not None:
+                    cam_t_frame = to_numpy(camera_t_list[i]).flatten()
+                    subject_motion["camera_t_trajectory"].append(cam_t_frame.copy())
+                    
                     if i == 0:
-                        print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0] (fallback): X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
+                        # Log both values for debugging
+                        print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0] (joint_coords[0]): X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
+                        if np.allclose(body_world_3d, 0):
+                            print(f"[{get_timestamp()}] [Motion Analyzer] NOTE: body_world=0 is normal (body at origin)")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] pred_cam_t[0] (camera trajectory): X={cam_t_frame[0]:.3f}, Y={cam_t_frame[1]:.3f}, Z={cam_t_frame[2]:.3f}")
+                else:
+                    subject_motion["camera_t_trajectory"].append(None)
+                    if i == 0:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0]: X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
             else:
                 subject_motion["body_world_3d"].append(None)
+                subject_motion["camera_t_trajectory"].append(None)
             
             # Apparent height (pixels) - use 2D indices
             head_2d = joints_2d[head_idx_2d] if head_idx_2d < len(joints_2d) else joints_2d[0]
