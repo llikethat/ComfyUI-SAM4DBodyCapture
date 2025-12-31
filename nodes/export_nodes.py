@@ -20,7 +20,7 @@ from typing import Dict, Tuple, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 
 # Version for logging (sync with other files)
-VERSION = "0.5.0-debug14"
+VERSION = "0.5.0-debug15"
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))

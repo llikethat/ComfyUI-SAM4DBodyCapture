@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug14"
+VERSION = "0.5.0-debug15"
 
 import numpy as np
 import torch
@@ -473,24 +473,12 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug12: DYNAMIC INDEX MAPPING based on source
-    # Check if using pred_keypoints_2d (MHR format) or joint_coords (SMPLH format)
-    use_mhr_indices = "pred_keypoints_2d" in joints_2d_source or kp_source == "keypoints_3d"
+    # debug15: DYNAMIC INDEX MAPPING based on source
+    # Project joint_coords = SMPLH format
+    # Project keypoints_3d = MHR format
+    use_smplh_indices = "joint_coords" in joints_2d_source or "SMPLH" in joints_2d_source
     
-    if use_mhr_indices:
-        # MHR 70-joint format (pred_keypoints_2d)
-        idx_map = {
-            "HEAD": MHRJoints.HEAD,              # 0
-            "PELVIS": MHRJoints.PELVIS,          # 8 (R_HIP as proxy)
-            "L_WRIST": MHRJoints.L_WRIST,        # 7
-            "R_WRIST": MHRJoints.R_WRIST,        # 4
-            "L_ANKLE": MHRJoints.L_ANKLE,        # 13
-            "R_ANKLE": MHRJoints.R_ANKLE,        # 10
-        }
-        max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 18
-        joint_names = MHRJoints.JOINT_NAMES
-        format_name = "MHR"
-    else:
+    if use_smplh_indices:
         # SMPLH 127-joint format (joint_coords projected)
         idx_map = {
             "HEAD": SMPLHJoints.HEAD,            # 16
@@ -503,10 +491,23 @@ def create_motion_debug_overlay(
         max_draw_index = SMPLHJoints.NUM_BODY_JOINTS  # 24
         joint_names = SMPLHJoints.JOINT_NAMES
         format_name = "SMPLH"
+    else:
+        # MHR 70-joint format (keypoints_3d projected)
+        idx_map = {
+            "HEAD": MHRJoints.HEAD,              # 0
+            "PELVIS": MHRJoints.PELVIS,          # 8 (R_HIP as proxy)
+            "L_WRIST": MHRJoints.L_WRIST,        # 7
+            "R_WRIST": MHRJoints.R_WRIST,        # 4
+            "L_ANKLE": MHRJoints.L_ANKLE,        # 13
+            "R_ANKLE": MHRJoints.R_ANKLE,        # 10
+        }
+        max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 18
+        joint_names = MHRJoints.JOINT_NAMES
+        format_name = "MHR"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug12: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug12: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug15: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug15: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -835,34 +836,34 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug12: Use DYNAMIC index mapping based on 2D source
-        # - pred_keypoints_2d uses MHR format (HEAD=0, PELVIS=8, L_ANKLE=13, R_ANKLE=10)
-        # - projected keypoints_3d uses SMPLH format (HEAD=16, PELVIS=1, L_ANKLE=8, R_ANKLE=9)
+        # debug15: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # This matches the mesh renderer which uses joint_coords
+        # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
         # Determine which format will be used for 2D joints
-        use_mhr_for_2d = has_kp_2d  # If we have pred_keypoints_2d, use MHR indices
+        use_smplh_for_2d = has_joint_coords  # Project joint_coords = SMPLH format
         
-        if use_mhr_for_2d:
-            # MHR format indices (for pred_keypoints_2d)
-            pelvis_idx_2d = MHRJoints.PELVIS       # 8 (R_HIP as proxy)
-            head_idx_2d = MHRJoints.HEAD           # 0
-            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 13
-            right_ankle_idx_2d = MHRJoints.R_ANKLE # 10
-            joint_names_2d = MHRJoints.JOINT_NAMES
-            format_2d = "MHR"
-        else:
-            # SMPLH format indices (for projected keypoints_3d)
+        if use_smplh_for_2d:
+            # SMPLH format indices (for projected joint_coords)
             pelvis_idx_2d = SMPLHJoints.PELVIS       # 1
             head_idx_2d = SMPLHJoints.HEAD           # 16
             left_ankle_idx_2d = SMPLHJoints.L_ANKLE  # 8
             right_ankle_idx_2d = SMPLHJoints.R_ANKLE # 9
             joint_names_2d = SMPLHJoints.JOINT_NAMES
             format_2d = "SMPLH"
+        else:
+            # MHR format indices (for projected keypoints_3d fallback)
+            pelvis_idx_2d = MHRJoints.PELVIS       # 8 (R_HIP as proxy)
+            head_idx_2d = MHRJoints.HEAD           # 0
+            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 13
+            right_ankle_idx_2d = MHRJoints.R_ANKLE # 10
+            joint_names_2d = MHRJoints.JOINT_NAMES
+            format_2d = "MHR"
         
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug12: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug15: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -926,31 +927,36 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug10 fix: joint_coords is in LOCAL body space, NOT world space!
-            # For 2D overlay, we must use either:
-            # 1. pred_keypoints_2d directly (already in pixel coords) - BEST
-            # 2. Project pred_keypoints_3d (18-joint world coords) - FALLBACK
-            # Do NOT project joint_coords - it's local/relative coordinates!
+            # debug15 fix: pred_keypoints_2d values are NOT valid pixel coords!
+            # Instead, PROJECT joint_coords to 2D using same transform as mesh_overlay.
+            # This ensures skeleton aligns with mesh.
+            #
+            # Priority:
+            # 1. Project joint_coords (127-joint SMPLH) → same as mesh renderer
+            # 2. Project keypoints_3d (70-joint) → fallback
+            # 3. Center of image → last resort
             
-            if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
-                # BEST: Use pred_keypoints_2d directly - already in pixel coordinates
-                keypoints_2d = to_numpy(keypoints_2d_list[i])
-                if keypoints_2d.ndim == 3:
-                    keypoints_2d = keypoints_2d.squeeze(0)
-                # Take only x,y (might have confidence as 3rd column)
-                if keypoints_2d.shape[1] >= 2:
-                    joints_2d = keypoints_2d[:, :2]
-                else:
-                    joints_2d = keypoints_2d
-                joints_2d_source = "pred_keypoints_2d (MHR format, pixel coords)"
+            if has_joint_coords and i < len(joint_coords_list) and joint_coords_list[i] is not None:
+                # BEST: Project joint_coords using same transform as mesh_overlay
+                # This MUST match mesh overlay since joint_coords come from same body model
+                jc = to_numpy(joint_coords_list[i])
+                if jc.ndim == 3:
+                    jc = jc.squeeze(0)
+                
+                joints_2d = project_points_to_2d(
+                    jc, focal, camera_t, image_size[0], image_size[1]
+                )
+                joints_2d_source = "projected joint_coords (SMPLH 127-joint)"
+                format_2d = "SMPLH"  # Override to SMPLH since we're using joint_coords
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug12: Using pred_keypoints_2d directly (MHR format)")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] pred_keypoints_2d shape: {joints_2d.shape}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug15: Projecting joint_coords → 2D (same as mesh)")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords shape: {jc.shape}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
                     subject_motion["joints_2d_source"] = joints_2d_source
                     
             elif has_kp_3d and i < len(keypoints_3d_list) and keypoints_3d_list[i] is not None:
-                # FALLBACK: Project pred_keypoints_3d (18-joint world space) to 2D
+                # FALLBACK: Project pred_keypoints_3d (70-joint) to 2D
                 kp3d_for_projection = to_numpy(keypoints_3d_list[i])
                 if kp3d_for_projection.ndim == 3:
                     kp3d_for_projection = kp3d_for_projection.squeeze(0)
@@ -958,10 +964,11 @@ class SAM4DMotionAnalyzer:
                 joints_2d = project_points_to_2d(
                     kp3d_for_projection, focal, camera_t, image_size[0], image_size[1]
                 )
-                joints_2d_source = "projected from keypoints_3d (SMPLH format)"
+                joints_2d_source = "projected keypoints_3d (MHR 70-joint)"
+                format_2d = "MHR"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug12: Projecting keypoints_3d (SMPLH) → 2D")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug15: Projecting keypoints_3d → 2D")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
                     subject_motion["joints_2d_source"] = joints_2d_source
             else:
@@ -969,10 +976,10 @@ class SAM4DMotionAnalyzer:
                 joints_2d = np.zeros((22, 2))
                 joints_2d[:, 0] = image_size[0] / 2
                 joints_2d[:, 1] = image_size[1] / 2
-                joints_2d_source = "fallback (no 2D data available)"
+                joints_2d_source = "fallback (no 3D data available)"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 2D keypoint data available!")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 3D keypoint data for projection!")
                     subject_motion["joints_2d_source"] = joints_2d_source
             
             subject_motion["joints_2d"].append(joints_2d)
