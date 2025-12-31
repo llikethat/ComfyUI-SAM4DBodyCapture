@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug11"
+VERSION = "0.5.0-debug12"
 
 import numpy as np
 import torch
@@ -36,120 +36,135 @@ def get_timestamp():
 
 
 # ============================================================================
-# Unified Body Joint Structure (works for both 70-joint and 127-joint formats)
-# From SAM3DBody MHR model - same indices for both pred_keypoints and joint_coords
+# Joint Index Definitions - MHR (70-joint) and SMPLH (127-joint) have DIFFERENT layouts!
+# debug12: Separate classes for each format with correct indices
 # ============================================================================
-class BodyJoints:
-    """Unified joint indices for SAM3DBody outputs.
+
+class MHRJoints:
+    """MHR 70-joint format indices (used by pred_keypoints_2d).
     
-    Both pred_keypoints_2d/3d (70 joints) and joint_coords (127 joints)
-    share the same body joint indices (0-21).
-    
-    CRITICAL: Index 0 is body_world (global trajectory), NOT pelvis!
-    
-    debug10: Corrected indices based on actual SAM3DBody MHR structure.
-    Previous versions used wrong indices from an incorrect reference.
+    This is a detection-based format where joints are ordered differently
+    from the SMPLH rigging format.
     """
-    # Global trajectory (index 0)
-    BODY_WORLD = 0   # Global movement (X, Y, Z translation in world space)
+    # Key body joints
+    HEAD = 0              # Head/nose
+    NECK = 1              # Neck
+    R_SHOULDER = 2        # Right shoulder
+    R_ELBOW = 3           # Right elbow
+    R_WRIST = 4           # Right wrist
+    L_SHOULDER = 5        # Left shoulder
+    L_ELBOW = 6           # Left elbow
+    L_WRIST = 7           # Left wrist
+    R_HIP = 8             # Right hip
+    R_KNEE = 9            # Right knee
+    R_ANKLE = 10          # Right ankle
+    L_HIP = 11            # Left hip
+    L_KNEE = 12           # Left knee
+    L_ANKLE = 13          # Left ankle
+    R_EYE = 14            # Right eye
+    L_EYE = 15            # Left eye
+    R_EAR = 16            # Right ear
+    L_EAR = 17            # Left ear
     
-    # Core body (1-21)
-    PELVIS = 1       # Anatomical root for spine and legs
-    SPINE_1 = 2      # Lower spine
-    SPINE_2 = 3      # Upper spine / shoulder connection
-    NECK = 4         # Base of neck
-    HEAD = 5         # Top of head / skull
+    # Pelvis approximation (midpoint of hips, use R_HIP or L_HIP as proxy)
+    PELVIS = 8            # Use R_HIP as pelvis proxy
     
-    # Left leg (6-8)
-    L_HIP = 6        # Primary left hip rotation
-    L_KNEE = 7       # Left knee flexion/extension
-    L_ANKLE = 8      # Left ankle joint
-    
-    # Right leg (9-11)
-    R_HIP = 9        # Primary right hip rotation
-    R_KNEE = 10      # Right knee flexion/extension
-    R_ANKLE = 11     # Right ankle joint
-    
-    # Feet (12-15)
-    L_FOOT_HEEL = 12 # Left foot heel
-    L_FOOT_TOE = 13  # Left foot toe
-    R_FOOT_HEEL = 14 # Right foot heel
-    R_FOOT_TOE = 15  # Right foot toe
-    
-    # Left arm (16-18)
-    L_SHOULDER = 16  # Left shoulder joint
-    L_ELBOW = 17     # Left elbow articulation
-    L_WRIST = 18     # Left wrist joint
-    
-    # Right arm (19-21)
-    R_SHOULDER = 19  # Right shoulder joint
-    R_ELBOW = 20     # Right elbow articulation
-    R_WRIST = 21     # Right wrist joint
-    
-    # Backward-compatible aliases (snake_case to UPPER_CASE with L/R prefix)
-    LEFT_HIP = L_HIP
-    LEFT_KNEE = L_KNEE
-    LEFT_ANKLE = L_ANKLE
-    RIGHT_HIP = R_HIP
-    RIGHT_KNEE = R_KNEE
-    RIGHT_ANKLE = R_ANKLE
+    # Aliases
     LEFT_SHOULDER = L_SHOULDER
     LEFT_ELBOW = L_ELBOW
     LEFT_WRIST = L_WRIST
+    LEFT_HIP = L_HIP
+    LEFT_KNEE = L_KNEE
+    LEFT_ANKLE = L_ANKLE
     RIGHT_SHOULDER = R_SHOULDER
     RIGHT_ELBOW = R_ELBOW
     RIGHT_WRIST = R_WRIST
-    LEFT_FOOT_HEEL = L_FOOT_HEEL
-    LEFT_FOOT_TOE = L_FOOT_TOE
-    RIGHT_FOOT_HEEL = R_FOOT_HEEL
-    RIGHT_FOOT_TOE = R_FOOT_TOE
+    RIGHT_HIP = R_HIP
+    RIGHT_KNEE = R_KNEE
+    RIGHT_ANKLE = R_ANKLE
     
-    # Hand joints (22+)
-    L_HAND_START = 22
-    L_HAND_END = 45
-    R_HAND_START = 46
-    R_HAND_END = 69
-    
-    NUM_BODY_JOINTS = 22  # Indices 0-21 (including body_world)
-    NUM_70_JOINTS = 70    # Body + hands
-    NUM_127_JOINTS = 127  # Body + hands + feet details + face
+    NUM_JOINTS = 70
+    NUM_BODY_JOINTS = 18  # First 18 are body joints
     
     # Joint names for labeling
     JOINT_NAMES = {
-        0: "body_world", 1: "pelvis", 2: "spine1", 3: "spine2",
-        4: "neck", 5: "head",
-        6: "L_hip", 7: "L_knee", 8: "L_ankle",
-        9: "R_hip", 10: "R_knee", 11: "R_ankle",
-        12: "L_heel", 13: "L_toe", 14: "R_heel", 15: "R_toe",
-        16: "L_shldr", 17: "L_elbow", 18: "L_wrist",
-        19: "R_shldr", 20: "R_elbow", 21: "R_wrist",
+        0: "head", 1: "neck", 2: "R_shldr", 3: "R_elbow", 4: "R_wrist",
+        5: "L_shldr", 6: "L_elbow", 7: "L_wrist",
+        8: "R_hip", 9: "R_knee", 10: "R_ankle",
+        11: "L_hip", 12: "L_knee", 13: "L_ankle",
+        14: "R_eye", 15: "L_eye", 16: "R_ear", 17: "L_ear",
     }
+
+
+class SMPLHJoints:
+    """SMPLH 127-joint format indices (used by joint_coords).
     
-    # Skeleton connections for visualization
-    CONNECTIONS = [
-        # Spine chain
-        (PELVIS, SPINE_1), (SPINE_1, SPINE_2), (SPINE_2, NECK), (NECK, HEAD),
-        # Left leg
-        (PELVIS, L_HIP), (L_HIP, L_KNEE), (L_KNEE, L_ANKLE), 
-        (L_ANKLE, L_FOOT_HEEL), (L_ANKLE, L_FOOT_TOE),
-        # Right leg
-        (PELVIS, R_HIP), (R_HIP, R_KNEE), (R_KNEE, R_ANKLE),
-        (R_ANKLE, R_FOOT_HEEL), (R_ANKLE, R_FOOT_TOE),
-        # Left arm
-        (SPINE_2, L_SHOULDER), (L_SHOULDER, L_ELBOW), (L_ELBOW, L_WRIST),
-        # Right arm
-        (SPINE_2, R_SHOULDER), (R_SHOULDER, R_ELBOW), (R_ELBOW, R_WRIST),
-        # Hip connection
-        (L_HIP, R_HIP),
-        # Shoulder connection
-        (L_SHOULDER, R_SHOULDER),
-    ]
+    This is a rigging-based format following SMPL-H body model structure.
+    Index 0 is body_world (global trajectory), anatomical joints start at 1.
+    """
+    # Global trajectory
+    BODY_WORLD = 0        # Global movement (X, Y, Z translation)
+    
+    # Core body (1-21)
+    PELVIS = 1            # Anatomical root
+    L_HIP = 2             # Left hip
+    R_HIP = 3             # Right hip
+    SPINE_1 = 4           # Lower spine
+    L_KNEE = 5            # Left knee
+    R_KNEE = 6            # Right knee
+    SPINE_2 = 7           # Mid spine
+    L_ANKLE = 8           # Left ankle
+    R_ANKLE = 9           # Right ankle
+    SPINE_3 = 10          # Upper spine
+    L_FOOT = 11           # Left foot
+    R_FOOT = 12           # Right foot
+    NECK = 13             # Neck
+    L_COLLAR = 14         # Left collar
+    R_COLLAR = 15         # Right collar
+    HEAD = 16             # Head
+    L_SHOULDER = 17       # Left shoulder
+    R_SHOULDER = 18       # Right shoulder
+    L_ELBOW = 19          # Left elbow
+    R_ELBOW = 20          # Right elbow
+    L_WRIST = 21          # Left wrist
+    R_WRIST = 22          # Right wrist
+    
+    # Aliases
+    LEFT_HIP = L_HIP
+    LEFT_KNEE = L_KNEE
+    LEFT_ANKLE = L_ANKLE
+    LEFT_SHOULDER = L_SHOULDER
+    LEFT_ELBOW = L_ELBOW
+    LEFT_WRIST = L_WRIST
+    RIGHT_HIP = R_HIP
+    RIGHT_KNEE = R_KNEE
+    RIGHT_ANKLE = R_ANKLE
+    RIGHT_SHOULDER = R_SHOULDER
+    RIGHT_ELBOW = R_ELBOW
+    RIGHT_WRIST = R_WRIST
+    
+    NUM_JOINTS = 127
+    NUM_BODY_JOINTS = 24  # First 24 are body joints (0-23)
+    
+    # Joint names for labeling
+    JOINT_NAMES = {
+        0: "body_world", 1: "pelvis", 2: "L_hip", 3: "R_hip",
+        4: "spine1", 5: "L_knee", 6: "R_knee", 7: "spine2",
+        8: "L_ankle", 9: "R_ankle", 10: "spine3", 11: "L_foot", 12: "R_foot",
+        13: "neck", 14: "L_collar", 15: "R_collar", 16: "head",
+        17: "L_shldr", 18: "R_shldr", 19: "L_elbow", 20: "R_elbow",
+        21: "L_wrist", 22: "R_wrist",
+    }
 
 
-# Backward compatibility aliases
-SAM3DJoints = BodyJoints
-MHRJoints = BodyJoints
-SMPLHJoints = BodyJoints
+# Backward compatibility - BodyJoints defaults to SMPLH
+class BodyJoints(SMPLHJoints):
+    """Alias for SMPLHJoints (default joint format)."""
+    pass
+
+
+# SAM3DJoints alias for backward compatibility
+SAM3DJoints = SMPLHJoints
 
 
 def to_numpy(data):
@@ -373,13 +388,11 @@ def create_motion_debug_overlay(
     """
     Create debug visualization with joint markers overlaid on video.
     
-    debug11: Uses pred_keypoints_2d directly (already in pixel coordinates).
-    The joints_2d data in subject_motion comes from pred_keypoints_2d which
-    is already properly aligned with the video frame.
+    debug12: Uses DYNAMIC index mapping based on keypoint source.
+    - MHR format (pred_keypoints_2d): HEAD=0, PELVIS=8, L_ANKLE=13, R_ANKLE=10
+    - SMPLH format (joint_coords): HEAD=16, PELVIS=1, L_ANKLE=8, R_ANKLE=9
     
-    Uses unified BodyJoints indices (same for all SAM3DBody outputs).
-    Only individual joint dots are shown - no skeleton lines since
-    joints have independent translational data.
+    Only individual joint dots are shown - no skeleton lines.
     """
     # Convert to uint8 if needed
     if images.dtype == np.float32 or images.dtype == np.float64:
@@ -390,6 +403,10 @@ def create_motion_debug_overlay(
     
     output = images.copy()
     num_frames = len(images)
+    
+    # Get keypoint source to determine which index mapping to use
+    kp_source = subject_motion.get("keypoint_source", "keypoints_3d")
+    joints_2d_source = subject_motion.get("joints_2d_source", "unknown")
     
     # Colors (BGR for OpenCV)
     COLOR_PELVIS = (0, 255, 0)       # Green
@@ -404,22 +421,49 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug10: Use unified BodyJoints indices
-    pelvis_idx = BodyJoints.PELVIS          # 1
-    head_idx = BodyJoints.HEAD              # 5
-    left_wrist_idx = BodyJoints.L_WRIST     # 18
-    right_wrist_idx = BodyJoints.R_WRIST    # 21
-    left_ankle_idx = BodyJoints.L_ANKLE     # 8
-    right_ankle_idx = BodyJoints.R_ANKLE    # 11
+    # debug12: DYNAMIC INDEX MAPPING based on source
+    # Check if using pred_keypoints_2d (MHR format) or joint_coords (SMPLH format)
+    use_mhr_indices = "pred_keypoints_2d" in joints_2d_source or kp_source == "keypoints_3d"
     
-    # Special joint indices for coloring
+    if use_mhr_indices:
+        # MHR 70-joint format (pred_keypoints_2d)
+        idx_map = {
+            "HEAD": MHRJoints.HEAD,              # 0
+            "PELVIS": MHRJoints.PELVIS,          # 8 (R_HIP as proxy)
+            "L_WRIST": MHRJoints.L_WRIST,        # 7
+            "R_WRIST": MHRJoints.R_WRIST,        # 4
+            "L_ANKLE": MHRJoints.L_ANKLE,        # 13
+            "R_ANKLE": MHRJoints.R_ANKLE,        # 10
+        }
+        max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 18
+        joint_names = MHRJoints.JOINT_NAMES
+        format_name = "MHR"
+    else:
+        # SMPLH 127-joint format (joint_coords projected)
+        idx_map = {
+            "HEAD": SMPLHJoints.HEAD,            # 16
+            "PELVIS": SMPLHJoints.PELVIS,        # 1
+            "L_WRIST": SMPLHJoints.L_WRIST,      # 21
+            "R_WRIST": SMPLHJoints.R_WRIST,      # 22
+            "L_ANKLE": SMPLHJoints.L_ANKLE,      # 8
+            "R_ANKLE": SMPLHJoints.R_ANKLE,      # 9
+        }
+        max_draw_index = SMPLHJoints.NUM_BODY_JOINTS  # 24
+        joint_names = SMPLHJoints.JOINT_NAMES
+        format_name = "SMPLH"
+    
+    # Log which format we're using (once)
+    print(f"[Motion Analyzer] debug12: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug12: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    
+    # Special joint indices for coloring (using dynamic map)
     special_joints = {
-        pelvis_idx: (COLOR_PELVIS, 8),      # Green, large
-        head_idx: (COLOR_HEAD, 6),          # Yellow, medium
-        left_wrist_idx: (COLOR_HANDS, 5),   # Magenta
-        right_wrist_idx: (COLOR_HANDS, 5),  # Magenta
-        left_ankle_idx: (COLOR_FEET, 5),    # Orange
-        right_ankle_idx: (COLOR_FEET, 5),   # Orange
+        idx_map["PELVIS"]: (COLOR_PELVIS, 8),      # Green, large
+        idx_map["HEAD"]: (COLOR_HEAD, 6),          # Yellow, medium
+        idx_map["L_WRIST"]: (COLOR_HANDS, 5),      # Magenta
+        idx_map["R_WRIST"]: (COLOR_HANDS, 5),      # Magenta
+        idx_map["L_ANKLE"]: (COLOR_FEET, 5),       # Orange
+        idx_map["R_ANKLE"]: (COLOR_FEET, 5),       # Orange
     }
     
     for i in range(num_frames):
@@ -430,15 +474,15 @@ def create_motion_debug_overlay(
         if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
             joints_2d_frame = np.array(joints_2d[i])
             
-            # Draw joint dots with labels (unified format - first 22 are body joints)
+            # Draw joint dots with labels
             if show_skeleton:
-                num_body_joints = min(BodyJoints.NUM_BODY_JOINTS, len(joints_2d_frame))
+                num_body_joints = min(max_draw_index, len(joints_2d_frame))
                 for j in range(num_body_joints):
                     pt = joints_2d_frame[j]
                     if pt is not None and len(pt) >= 2:
                         x, y = int(pt[0]), int(pt[1])
                         # Skip invalid coordinates
-                        if x < 0 or y < 0 or x > 10000 or y > 10000:
+                        if x < 0 or y < 0 or x >= frame.shape[1] or y >= frame.shape[0]:
                             continue
                         # Use special color/size for key joints
                         if j in special_joints:
@@ -450,20 +494,25 @@ def create_motion_debug_overlay(
                         # Add black outline for visibility
                         cv2.circle(frame, (x, y), radius, (0, 0, 0), 1)
                         
-                        # Draw joint label (index and short name)
-                        if j in BodyJoints.JOINT_NAMES:
-                            label = f"{j}"  # Just index for clarity
+                        # Draw joint label (index)
+                        if j in joint_names:
+                            label = f"{j}"
                             cv2.putText(frame, label, (x + 5, y - 5),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.3, COLOR_LABEL, 1)
         
-        # Draw pelvis position with larger black outline
-        pelvis_2d = subject_motion.get("pelvis_2d")
-        if pelvis_2d is not None and i < len(pelvis_2d):
-            px, py = pelvis_2d[i]
-            cv2.circle(frame, (int(px), int(py)), 10, (0, 0, 0), 2)  # Black outline
+        # Draw pelvis tracking using dynamic index
+        pelvis_idx = idx_map["PELVIS"]
+        if joints_2d is not None and i < len(joints_2d) and joints_2d[i] is not None:
+            joints_2d_frame = np.array(joints_2d[i])
+            if pelvis_idx < len(joints_2d_frame):
+                pelvis_pt = joints_2d_frame[pelvis_idx]
+                px, py = int(pelvis_pt[0]), int(pelvis_pt[1])
+                if 0 <= px < frame.shape[1] and 0 <= py < frame.shape[0]:
+                    cv2.circle(frame, (px, py), 10, (0, 0, 0), 2)  # Black ring
         
         # Draw velocity arrow
         velocity_2d = subject_motion.get("velocity_2d")
+        pelvis_2d = subject_motion.get("pelvis_2d")
         if velocity_2d is not None and i > 0 and (i-1) < len(velocity_2d):
             vx, vy = velocity_2d[i-1]
             if pelvis_2d is not None and i < len(pelvis_2d):
@@ -527,16 +576,17 @@ class SAM4DMotionAnalyzer:
     - Foot contact detection (both/left/right/none)
     - Apparent height in pixels (depth indicator)
     
-    debug11 Changes (CRITICAL FIX):
-    - Use pred_keypoints_2d DIRECTLY (already in pixel coords) for 2D overlay
-    - Do NOT project joint_coords - it's in LOCAL body space, not world space!
-    - Fallback: project pred_keypoints_3d (18-joint world space) if 2D unavailable
-    - Uses unified BodyJoints indices (same indices work for all data sources)
+    debug12 Changes:
+    - DYNAMIC index mapping based on 2D source format
+    - MHR format (pred_keypoints_2d): HEAD=0, PELVIS=8, L_ANKLE=13, R_ANKLE=10
+    - SMPLH format (projected): HEAD=16, PELVIS=1, L_ANKLE=8, R_ANKLE=9
+    - Uses pred_keypoints_2d directly when available (MHR format, pixel coords)
+    - Fallback: project pred_keypoints_3d (SMPLH format) if 2D unavailable
     
     Data Sources:
-    - pred_keypoints_2d: 70 joints, already in pixel coordinates (USE THIS FOR 2D!)
-    - pred_keypoints_3d: 18 joints, world space coordinates
-    - joint_coords: 127 joints, LOCAL body space (NOT for 2D projection!)
+    - pred_keypoints_2d: 70 joints, MHR format, already in pixel coordinates
+    - pred_keypoints_3d: 18 joints, SMPLH format, world space coordinates
+    - joint_coords: 127 joints, SMPLH format, LOCAL body space (NOT for 2D!)
     
     Skeleton Modes:
     - "Simple Skeleton" (default): Uses 18-joint keypoints
@@ -732,25 +782,43 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug10: Use unified BodyJoints indices for all data sources
-        # All SAM3DBody outputs (joint_coords, pred_keypoints_3d) use same indices:
-        # - Index 0 = body_world (global trajectory)
-        # - Index 1 = pelvis (anatomical root)
-        # - Indices 5, 8, 11 = head, L_ankle, R_ankle
+        # debug12: Use DYNAMIC index mapping based on 2D source
+        # - pred_keypoints_2d uses MHR format (HEAD=0, PELVIS=8, L_ANKLE=13, R_ANKLE=10)
+        # - projected keypoints_3d uses SMPLH format (HEAD=16, PELVIS=1, L_ANKLE=8, R_ANKLE=9)
         
-        # Use unified indices for both 2D and 3D
-        pelvis_idx = BodyJoints.PELVIS           # 1
-        head_idx = BodyJoints.HEAD               # 5
-        left_ankle_idx = BodyJoints.L_ANKLE      # 8
-        right_ankle_idx = BodyJoints.R_ANKLE     # 11
+        # Determine which format will be used for 2D joints
+        use_mhr_for_2d = has_kp_2d  # If we have pred_keypoints_2d, use MHR indices
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug10: Using unified BodyJoints indices")
-        print(f"[{get_timestamp()}] [Motion Analyzer] Indices: pelvis={pelvis_idx}, head={head_idx}, L_ankle={left_ankle_idx}, R_ankle={right_ankle_idx}")
+        if use_mhr_for_2d:
+            # MHR format indices (for pred_keypoints_2d)
+            pelvis_idx_2d = MHRJoints.PELVIS       # 8 (R_HIP as proxy)
+            head_idx_2d = MHRJoints.HEAD           # 0
+            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 13
+            right_ankle_idx_2d = MHRJoints.R_ANKLE # 10
+            joint_names_2d = MHRJoints.JOINT_NAMES
+            format_2d = "MHR"
+        else:
+            # SMPLH format indices (for projected keypoints_3d)
+            pelvis_idx_2d = SMPLHJoints.PELVIS       # 1
+            head_idx_2d = SMPLHJoints.HEAD           # 16
+            left_ankle_idx_2d = SMPLHJoints.L_ANKLE  # 8
+            right_ankle_idx_2d = SMPLHJoints.R_ANKLE # 9
+            joint_names_2d = SMPLHJoints.JOINT_NAMES
+            format_2d = "SMPLH"
+        
+        # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
+        pelvis_idx_3d = SMPLHJoints.PELVIS
+        
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug12: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
         track_body_world = (kp_source == "joint_coords")
         if track_body_world:
             print(f"[{get_timestamp()}] [Motion Analyzer] Tracking body_world (idx 0) for global trajectory")
+        
+        # Initialize subject_motion with joints_2d_source tracking
+        joints_2d_source_str = ""  # Will be set in first frame
         
         subject_motion = {
             "pelvis_2d": [],
@@ -770,6 +838,7 @@ class SAM4DMotionAnalyzer:
             "scale_factor": scale_factor,
             "skeleton_mode": skeleton_mode,
             "keypoint_source": kp_source,
+            "joints_2d_source": "",  # Will be updated after first frame
         }
         
         for i in range(num_frames):
@@ -819,11 +888,12 @@ class SAM4DMotionAnalyzer:
                     joints_2d = keypoints_2d[:, :2]
                 else:
                     joints_2d = keypoints_2d
-                joints_2d_source = "pred_keypoints_2d (direct pixel coords)"
+                joints_2d_source = "pred_keypoints_2d (MHR format, pixel coords)"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug10: Using pred_keypoints_2d directly (already in pixel coords)")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug12: Using pred_keypoints_2d directly (MHR format)")
                     print(f"[{get_timestamp()}] [Motion Analyzer] pred_keypoints_2d shape: {joints_2d.shape}")
+                    subject_motion["joints_2d_source"] = joints_2d_source
                     
             elif has_kp_3d and i < len(keypoints_3d_list) and keypoints_3d_list[i] is not None:
                 # FALLBACK: Project pred_keypoints_3d (18-joint world space) to 2D
@@ -834,11 +904,12 @@ class SAM4DMotionAnalyzer:
                 joints_2d = project_points_to_2d(
                     kp3d_for_projection, focal, camera_t, image_size[0], image_size[1]
                 )
-                joints_2d_source = f"projected from keypoints_3d (18-joint world coords)"
+                joints_2d_source = "projected from keypoints_3d (SMPLH format)"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug10: Projecting keypoints_3d (world space) → 2D")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug12: Projecting keypoints_3d (SMPLH) → 2D")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
+                    subject_motion["joints_2d_source"] = joints_2d_source
             else:
                 # LAST RESORT: Use center of image as fallback
                 joints_2d = np.zeros((22, 2))
@@ -848,6 +919,7 @@ class SAM4DMotionAnalyzer:
                 
                 if i == 0:
                     print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 2D keypoint data available!")
+                    subject_motion["joints_2d_source"] = joints_2d_source
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
@@ -857,23 +929,25 @@ class SAM4DMotionAnalyzer:
                 print(f"[{get_timestamp()}] [Motion Analyzer] ===== JOINT POSITIONS (Frame 0) =====")
                 print(f"[{get_timestamp()}] [Motion Analyzer] joints_2d shape: {joints_2d.shape}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] joints_2d source: {joints_2d_source}")
+                print(f"[{get_timestamp()}] [Motion Analyzer] 2D format: {format_2d}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] Image size: {image_size[0]}x{image_size[1]}")
-                print(f"[{get_timestamp()}] [Motion Analyzer] --- Body Joints (unified indices 0-21) ---")
-                for j_idx in range(min(22, len(joints_2d))):
-                    j_name = BodyJoints.JOINT_NAMES.get(j_idx, f"joint{j_idx}")
+                print(f"[{get_timestamp()}] [Motion Analyzer] --- Body Joints ({format_2d} indices) ---")
+                num_to_print = min(18 if format_2d == "MHR" else 24, len(joints_2d))
+                for j_idx in range(num_to_print):
+                    j_name = joint_names_2d.get(j_idx, f"joint{j_idx}")
                     j_x, j_y = joints_2d[j_idx][0], joints_2d[j_idx][1]
                     print(f"[{get_timestamp()}] [Motion Analyzer]   [{j_idx:2d}] {j_name:10s}: x={j_x:7.1f}, y={j_y:7.1f}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] ========================================")
             
-            # Pelvis position - use unified indices for both 2D and 3D
-            pelvis_3d = keypoints_3d[pelvis_idx] * scale_factor
-            pelvis_2d = joints_2d[pelvis_idx] if pelvis_idx < len(joints_2d) else joints_2d[0]
+            # Pelvis position - use 2D indices for 2D, 3D indices for 3D
+            pelvis_3d = keypoints_3d[pelvis_idx_3d] * scale_factor if pelvis_idx_3d < len(keypoints_3d) else np.zeros(3)
+            pelvis_2d = joints_2d[pelvis_idx_2d] if pelvis_idx_2d < len(joints_2d) else joints_2d[0]
             subject_motion["pelvis_3d"].append(pelvis_3d.copy())
             subject_motion["pelvis_2d"].append(pelvis_2d.copy())
             
-            # Body world (global trajectory) - index 0
+            # Body world (global trajectory) - index 0 in SMPLH format
             if track_body_world and len(keypoints_3d) >= 22:
-                body_world_3d = keypoints_3d[BodyJoints.BODY_WORLD] * scale_factor
+                body_world_3d = keypoints_3d[SMPLHJoints.BODY_WORLD] * scale_factor
                 subject_motion["body_world_3d"].append(body_world_3d.copy())
                 # Log body_world position for first frame
                 if i == 0:
@@ -881,10 +955,10 @@ class SAM4DMotionAnalyzer:
             else:
                 subject_motion["body_world_3d"].append(None)
             
-            # Apparent height (pixels) - use unified indices
-            head_2d = joints_2d[head_idx] if head_idx < len(joints_2d) else joints_2d[0]
-            left_ankle_2d = joints_2d[left_ankle_idx] if left_ankle_idx < len(joints_2d) else joints_2d[0]
-            right_ankle_2d = joints_2d[right_ankle_idx] if right_ankle_idx < len(joints_2d) else joints_2d[0]
+            # Apparent height (pixels) - use 2D indices
+            head_2d = joints_2d[head_idx_2d] if head_idx_2d < len(joints_2d) else joints_2d[0]
+            left_ankle_2d = joints_2d[left_ankle_idx_2d] if left_ankle_idx_2d < len(joints_2d) else joints_2d[0]
+            right_ankle_2d = joints_2d[right_ankle_idx_2d] if right_ankle_idx_2d < len(joints_2d) else joints_2d[0]
             feet_y = max(left_ankle_2d[1], right_ankle_2d[1])
             apparent_height = abs(feet_y - head_2d[1])
             subject_motion["apparent_height"].append(apparent_height)
