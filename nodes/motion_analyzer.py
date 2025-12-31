@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug12"
+VERSION = "0.5.0-debug13"
 
 import numpy as np
 import torch
@@ -236,6 +236,58 @@ def project_points_to_2d(
     y_2d = focal_length * Y / Z + cy
     
     return np.stack([x_2d, y_2d], axis=1)
+
+
+def get_global_trajectory_point(
+    mesh_sequence: dict,
+    frame_index: int
+) -> Optional[np.ndarray]:
+    """
+    Returns the Body World (Global Trajectory) coordinate for a given frame.
+    
+    This function extracts the global root position (index 0 in joint_coords)
+    which represents the character's world-space position separate from
+    local body pose.
+    
+    Args:
+        mesh_sequence: SAM4D mesh sequence dict with params containing joint_coords
+        frame_index: Frame index to extract trajectory from
+        
+    Returns:
+        np.ndarray of shape (3,) with [X, Y, Z] world coordinates, or None if unavailable
+        
+    Note:
+        - Must use 'joint_coords' (127 joints), not 'keypoints_3d'
+        - Index 0 = body_world (global trajectory)
+        - Index 1 = pelvis (anatomical root)
+    """
+    params = mesh_sequence.get("params", {})
+    
+    # Must use joint_coords (127-joint SMPLH format)
+    joint_coords = params.get("joint_coords")
+    
+    if joint_coords is None:
+        return None
+    
+    # Check bounds
+    if frame_index < 0 or frame_index >= len(joint_coords):
+        return None
+    
+    # Extract frame data
+    current_frame_joints = joint_coords[frame_index]
+    
+    # Handle both tensor and numpy formats
+    if hasattr(current_frame_joints, "cpu"):
+        current_frame_joints = current_frame_joints.cpu().numpy()
+    elif not isinstance(current_frame_joints, np.ndarray):
+        current_frame_joints = np.array(current_frame_joints)
+    
+    # Return index 0 (body_world / global trajectory)
+    # This is distinct from pelvis (index 1)
+    if len(current_frame_joints) > 0:
+        return current_frame_joints[0].copy()
+    
+    return None
 
 
 def estimate_height_from_keypoints(
@@ -652,8 +704,8 @@ class SAM4DMotionAnalyzer:
             }
         }
     
-    RETURN_TYPES = ("SUBJECT_MOTION", "SCALE_INFO", "IMAGE", "STRING")
-    RETURN_NAMES = ("subject_motion", "scale_info", "debug_overlay", "debug_info")
+    RETURN_TYPES = ("SUBJECT_MOTION", "SCALE_INFO", "IMAGE", "STRING", "MOTION_ANALYSIS")
+    RETURN_NAMES = ("subject_motion", "scale_info", "debug_overlay", "debug_info", "motion_analysis")
     FUNCTION = "analyze"
     CATEGORY = "SAM4DBodyCapture/Motion"
     
@@ -683,6 +735,7 @@ class SAM4DMotionAnalyzer:
         # Extract data from mesh sequence
         vertices_list = mesh_sequence.get("vertices", [])
         params = mesh_sequence.get("params", {})
+        sequence_fps = mesh_sequence.get("fps", 30.0)  # Extract FPS for metadata
         
         # Get keypoint data
         keypoints_2d_list = params.get("keypoints_2d", [])
@@ -694,7 +747,7 @@ class SAM4DMotionAnalyzer:
         num_frames = len(vertices_list)
         if num_frames == 0:
             print("[Motion Analyzer] ERROR: No frames in mesh sequence!")
-            return ({}, {}, torch.zeros(1, 64, 64, 3), "Error: No frames")
+            return ({}, {}, torch.zeros(1, 64, 64, 3), "Error: No frames", {})
         
         print(f"[{get_timestamp()}] [Motion Analyzer] Processing {num_frames} frames...")
         
@@ -717,7 +770,7 @@ class SAM4DMotionAnalyzer:
             print(f"[{get_timestamp()}] [Motion Analyzer] Fallback to 18-joint keypoints_3d")
         else:
             print("[Motion Analyzer] ERROR: No 3D keypoint data available!")
-            return ({}, {}, torch.zeros(1, 64, 64, 3), "Error: No keypoint data")
+            return ({}, {}, torch.zeros(1, 64, 64, 3), "Error: No keypoint data", {})
         
         # Get image size
         image_size = (1920, 1080)  # Default
@@ -938,6 +991,55 @@ class SAM4DMotionAnalyzer:
                     j_x, j_y = joints_2d[j_idx][0], joints_2d[j_idx][1]
                     print(f"[{get_timestamp()}] [Motion Analyzer]   [{j_idx:2d}] {j_name:10s}: x={j_x:7.1f}, y={j_y:7.1f}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] ========================================")
+                
+                # ===== PROJECTION COMPARISON (Frame 0) =====
+                # Compare ground truth (pred_keypoints_2d) vs our projection of pred_keypoints_3d
+                if has_kp_2d and has_kp_3d:
+                    gt_2d = to_numpy(keypoints_2d_list[0])
+                    kp_3d = to_numpy(keypoints_3d_list[0])
+                    if gt_2d.ndim == 3:
+                        gt_2d = gt_2d.squeeze(0)
+                    if kp_3d.ndim == 3:
+                        kp_3d = kp_3d.squeeze(0)
+                    if gt_2d.shape[1] >= 2:
+                        gt_2d = gt_2d[:, :2]
+                    
+                    # Project 3D keypoints using our function
+                    projected_2d = project_points_to_2d(
+                        kp_3d, focal, camera_t, image_size[0], image_size[1]
+                    )
+                    
+                    print(f"[DEBUG] ========== PROJECTION COMPARISON (Frame 0) ==========")
+                    print(f"[DEBUG] Image size: {image_size[0]}x{image_size[1]}, Focal: {focal:.1f}px")
+                    print(f"[DEBUG] pred_cam_t: tx={camera_t[0]:.4f}, ty={camera_t[1]:.4f}, tz={camera_t[2]:.4f}")
+                    print(f"[DEBUG] Ground truth: pred_keypoints_2d ({gt_2d.shape[0]} joints)")
+                    print(f"[DEBUG] 3D source: pred_keypoints_3d ({kp_3d.shape[0]} joints)")
+                    print(f"[DEBUG]")
+                    print(f"[DEBUG] Joint | Ground Truth (x,y) | Our Projection (x,y) | Diff (dx, dy)")
+                    print(f"[DEBUG] ------|-------------------|---------------------|---------------")
+                    
+                    total_dx, total_dy = 0.0, 0.0
+                    num_compared = min(len(gt_2d), len(projected_2d), 18)  # Compare first 18 body joints
+                    
+                    for j in range(num_compared):
+                        gt_x, gt_y = gt_2d[j][0], gt_2d[j][1]
+                        proj_x, proj_y = projected_2d[j][0], projected_2d[j][1]
+                        dx = proj_x - gt_x
+                        dy = proj_y - gt_y
+                        total_dx += dx
+                        total_dy += dy
+                        print(f"[DEBUG]   {j:3d}  | ({gt_x:7.1f},{gt_y:7.1f}) | ({proj_x:7.1f},{proj_y:7.1f}) | ({dx:+6.1f}, {dy:+6.1f})")
+                    
+                    print(f"[DEBUG] ------|-------------------|---------------------|---------------")
+                    avg_dx = total_dx / num_compared if num_compared > 0 else 0
+                    avg_dy = total_dy / num_compared if num_compared > 0 else 0
+                    print(f"[DEBUG] AVERAGE OFFSET: dx={avg_dx:+.1f}px, dy={avg_dy:+.1f}px")
+                    
+                    if abs(avg_dx) < 5 and abs(avg_dy) < 5:
+                        print(f"[DEBUG] ✓ Projection formula appears CORRECT!")
+                    else:
+                        print(f"[DEBUG] ✗ Projection has significant offset - check formula")
+                    print(f"[DEBUG] ==========================================================")
             
             # Pelvis position - use 2D indices for 2D, 3D indices for 3D
             pelvis_3d = keypoints_3d[pelvis_idx_3d] * scale_factor if pelvis_idx_3d < len(keypoints_3d) else np.zeros(3)
@@ -947,11 +1049,20 @@ class SAM4DMotionAnalyzer:
             
             # Body world (global trajectory) - index 0 in SMPLH format
             if track_body_world and len(keypoints_3d) >= 22:
-                body_world_3d = keypoints_3d[SMPLHJoints.BODY_WORLD] * scale_factor
-                subject_motion["body_world_3d"].append(body_world_3d.copy())
-                # Log body_world position for first frame
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0] (global trajectory): X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
+                # Use get_global_trajectory_point for cleaner extraction
+                body_world_3d = get_global_trajectory_point(mesh_sequence, i)
+                if body_world_3d is not None:
+                    body_world_3d = body_world_3d * scale_factor
+                    subject_motion["body_world_3d"].append(body_world_3d.copy())
+                    # Log body_world position for first frame
+                    if i == 0:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0] (global trajectory): X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
+                else:
+                    # Fallback to direct access if function returns None
+                    body_world_3d = keypoints_3d[SMPLHJoints.BODY_WORLD] * scale_factor
+                    subject_motion["body_world_3d"].append(body_world_3d.copy())
+                    if i == 0:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] body_world[0] (fallback): X={body_world_3d[0]:.3f}, Y={body_world_3d[1]:.3f}, Z={body_world_3d[2]:.3f}")
             else:
                 subject_motion["body_world_3d"].append(None)
             
@@ -1039,7 +1150,33 @@ class SAM4DMotionAnalyzer:
         
         print(f"[{get_timestamp()}] [Motion Analyzer] =============================================\n")
         
-        return (subject_motion, scale_info, debug_overlay, debug_info)
+        # ===== BUILD MOTION_ANALYSIS FOR FBX EXPORT =====
+        # This dict provides FBX-compatible metadata with correct data types
+        # format_2d is defined earlier in the function ("MHR" or "SMPLH")
+        motion_analysis = {
+            # Motion stats
+            "skeleton_mode": scale_info.get("skeleton_mode", "unknown"),
+            "keypoint_source": scale_info.get("keypoint_source", "unknown"),
+            "joint_indices_format": format_2d,
+            "num_frames": int(num_frames),
+            "fps": float(sequence_fps),  # From mesh_sequence
+            "avg_velocity_2d": float(np.mean([np.linalg.norm(v) for v in subject_motion.get("velocity_2d", [[0,0]])])) if subject_motion.get("velocity_2d") else 0.0,
+            "max_velocity_2d": float(np.max([np.linalg.norm(v) for v in subject_motion.get("velocity_2d", [[0,0]])])) if subject_motion.get("velocity_2d") else 0.0,
+            "grounded_frames": int(sum(1 for f in subject_motion.get("foot_contact", []) if f in ["both", "left", "right"])),
+            "airborne_frames": int(sum(1 for f in subject_motion.get("foot_contact", []) if f == "none")),
+            "depth_min": float(min(subject_motion.get("depth_estimate", [0]))) if subject_motion.get("depth_estimate") else 0.0,
+            "depth_max": float(max(subject_motion.get("depth_estimate", [0]))) if subject_motion.get("depth_estimate") else 0.0,
+            # Scale info
+            "actual_height_m": float(scale_info.get("actual_height_m", 0)),
+            "mesh_height_units": float(scale_info.get("mesh_height_units", 0)),
+            "estimated_height_units": float(scale_info.get("estimated_height_units", 0)),
+            "scale_factor": float(scale_info.get("scale_factor", 1)),
+            "leg_length_units": float(scale_info.get("leg_length_units", 0)),
+            "torso_head_units": float(scale_info.get("torso_head_units", 0)),
+            "height_source": str(scale_info.get("source", "unknown")),
+        }
+        
+        return (subject_motion, scale_info, debug_overlay, debug_info, motion_analysis)
 
 
 class SAM4DScaleInfoDisplay:

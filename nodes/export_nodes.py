@@ -19,6 +19,9 @@ import torch
 from typing import Dict, Tuple, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 
+# Version for logging (sync with other files)
+VERSION = "0.5.0-debug13"
+
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -561,6 +564,9 @@ class SAM4DExportCharacterFBX:
                 "camera_intrinsics": ("CAMERA_INTRINSICS", {
                     "tooltip": "Camera intrinsics from MoGe2 or manual input"
                 }),
+                "motion_analysis": ("MOTION_ANALYSIS", {
+                    "tooltip": "Motion analysis results from SAM4DMotionAnalyzer"
+                }),
                 "coordinate_system": (cls.COORD_SYSTEMS, {"default": "Y-up (Maya/Blender)"}),
                 "fps": ("FLOAT", {"default": 30.0, "min": 1.0, "max": 120.0}),
                 "flip_x": ("BOOLEAN", {
@@ -576,6 +582,12 @@ class SAM4DExportCharacterFBX:
                     "min": 1.0,
                     "max": 100.0,
                     "tooltip": "Camera sensor width in mm (35mm = 36mm)"
+                }),
+                "skip_first_frames": ("INT", {
+                    "default": 0,
+                    "min": 0,
+                    "max": 1000,
+                    "tooltip": "Number of frames skipped from video start (for metadata)"
                 }),
             }
         }
@@ -621,11 +633,13 @@ class SAM4DExportCharacterFBX:
         mesh_sequence: dict,
         filename: str = "sam4d_animation",
         camera_intrinsics: dict = None,
+        motion_analysis: dict = None,
         coordinate_system: str = "Y-up (Maya/Blender)",
         fps: float = 30.0,
         flip_x: bool = True,
         include_camera: bool = True,
         sensor_width: float = 36.0,
+        skip_first_frames: int = 0,
     ):
         seq = SAM4DMeshSequence.from_dict(mesh_sequence)
         
@@ -794,7 +808,39 @@ class SAM4DExportCharacterFBX:
             "film_offset_x_inch": film_offset_x_inch,
             "film_offset_y_inch": film_offset_y_inch,
             "sensor_height": sensor_height,
+            # ===== METADATA (debug13) =====
+            "metadata": {
+                "version": VERSION,
+                "skip_first_frames": skip_first_frames,
+                "flip_x": flip_x,
+                "coordinate_system": coordinate_system,
+            }
         }
+        
+        # Add motion analysis metadata if provided
+        if motion_analysis:
+            export_data["metadata"]["motion_analysis"] = {
+                "skeleton_mode": motion_analysis.get("skeleton_mode", "unknown"),
+                "keypoint_source": motion_analysis.get("keypoint_source", "unknown"),
+                "joint_indices_format": motion_analysis.get("joint_indices_format", "unknown"),
+                "num_frames": motion_analysis.get("num_frames", 0),
+                "fps": motion_analysis.get("fps", 30.0),
+                "avg_velocity_2d": motion_analysis.get("avg_velocity_2d", 0.0),
+                "max_velocity_2d": motion_analysis.get("max_velocity_2d", 0.0),
+                "grounded_frames": motion_analysis.get("grounded_frames", 0),
+                "airborne_frames": motion_analysis.get("airborne_frames", 0),
+                "depth_min": motion_analysis.get("depth_min", 0.0),
+                "depth_max": motion_analysis.get("depth_max", 0.0),
+            }
+            export_data["metadata"]["scale_info"] = {
+                "actual_height_m": motion_analysis.get("actual_height_m", 0.0),
+                "mesh_height_units": motion_analysis.get("mesh_height_units", 0.0),
+                "estimated_height_units": motion_analysis.get("estimated_height_units", 0.0),
+                "scale_factor": motion_analysis.get("scale_factor", 1.0),
+                "leg_length_units": motion_analysis.get("leg_length_units", 0.0),
+                "torso_head_units": motion_analysis.get("torso_head_units", 0.0),
+                "height_source": motion_analysis.get("height_source", "unknown"),
+            }
         
         # Write temp JSON
         with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
