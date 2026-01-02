@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug16"
+VERSION = "0.5.0-debug17"
 
 import numpy as np
 import torch
@@ -473,7 +473,7 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug16: DYNAMIC INDEX MAPPING based on source
+    # debug17: DYNAMIC INDEX MAPPING based on source
     # Project joint_coords = SMPLH format
     # Project keypoints_3d = MHR format
     use_smplh_indices = "joint_coords" in joints_2d_source or "SMPLH" in joints_2d_source
@@ -506,8 +506,8 @@ def create_motion_debug_overlay(
         format_name = "MHR"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug16: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug16: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug17: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug17: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -836,7 +836,7 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug16: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # debug17: Use SMPLH indices since we PROJECT joint_coords to 2D
         # This matches the mesh renderer which uses joint_coords
         # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
@@ -863,7 +863,7 @@ class SAM4DMotionAnalyzer:
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug16: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug17: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -927,85 +927,127 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug16 fix: pred_keypoints_2d values are NOT valid pixel coords!
-            # Instead, PROJECT joint_coords to 2D using same transform as mesh_overlay.
-            # This ensures skeleton aligns with mesh.
+            # debug17: Test TWO approaches to fix skeleton alignment:
+            # 
+            # Approach A: pred_keypoints_2d + bbox offset (if it's in crop coordinates)
+            # Approach B: Transform joint_coords using vertices centroid offset
             #
-            # Priority:
-            # 1. Project joint_coords (127-joint SMPLH) → same as mesh renderer
-            # 2. Project keypoints_3d (70-joint) → fallback
-            # 3. Center of image → last resort
+            # We'll compute BOTH and log results to see which aligns better
             
+            joints_2d_A = None  # Approach A result
+            joints_2d_B = None  # Approach B result
+            
+            # Get vertices for Approach B
+            verts = None
+            if i < len(vertices_list) and vertices_list[i] is not None:
+                verts = to_numpy(vertices_list[i])
+                if verts.ndim == 3:
+                    verts = verts.squeeze(0)
+            
+            # ===== APPROACH A: pred_keypoints_2d with potential bbox offset =====
+            if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
+                kp2d = to_numpy(keypoints_2d_list[i])
+                if kp2d.ndim == 3:
+                    kp2d = kp2d.squeeze(0)
+                if kp2d.shape[1] >= 2:
+                    joints_2d_A = kp2d[:, :2].copy()
+                else:
+                    joints_2d_A = kp2d.copy()
+                
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug17: ===== APPROACH A: pred_keypoints_2d =====")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Raw pred_keypoints_2d[0] (head): ({joints_2d_A[0,0]:.1f}, {joints_2d_A[0,1]:.1f})")
+            
+            # ===== APPROACH B: joint_coords transformed with vertices centroid offset =====
             if has_joint_coords and i < len(joint_coords_list) and joint_coords_list[i] is not None:
-                # BEST: Project joint_coords using same transform as mesh_overlay
-                # This MUST match mesh overlay since joint_coords come from same body model
                 jc = to_numpy(joint_coords_list[i])
                 if jc.ndim == 3:
                     jc = jc.squeeze(0)
                 
-                # debug16: Print RAW 3D joint_coords BEFORE projection
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug16: ===== RAW 3D JOINT_COORDS (Frame 0) =====")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords shape: {jc.shape}")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords range: X=[{jc[:,0].min():.3f}, {jc[:,0].max():.3f}], Y=[{jc[:,1].min():.3f}, {jc[:,1].max():.3f}], Z=[{jc[:,2].min():.3f}, {jc[:,2].max():.3f}]")
-                    # Print key joints in 3D
-                    key_joints = [(0, "body_world"), (1, "pelvis"), (16, "head"), (8, "L_ankle"), (9, "R_ankle")]
-                    for idx, name in key_joints:
-                        if idx < len(jc):
-                            print(f"[{get_timestamp()}] [Motion Analyzer]   [{idx:2d}] {name:12s}: X={jc[idx,0]:7.3f}, Y={jc[idx,1]:7.3f}, Z={jc[idx,2]:7.3f}")
+                # Compute offset between vertices centroid and joint_coords centroid
+                if verts is not None:
+                    verts_centroid = verts.mean(axis=0)
+                    jc_centroid = jc.mean(axis=0)
+                    offset_3d = verts_centroid - jc_centroid
                     
-                    # Also print cam_t for reference
-                    print(f"[{get_timestamp()}] [Motion Analyzer] pred_cam_t: [{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
+                    # Apply offset to align joint_coords with vertices
+                    jc_transformed = jc + offset_3d
                     
-                    # Compare with vertices if available
-                    if i < len(vertices_list) and vertices_list[i] is not None:
-                        verts = to_numpy(vertices_list[i])
-                        if verts.ndim == 3:
-                            verts = verts.squeeze(0)
-                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices shape: {verts.shape}")
-                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices range: X=[{verts[:,0].min():.3f}, {verts[:,0].max():.3f}], Y=[{verts[:,1].min():.3f}, {verts[:,1].max():.3f}], Z=[{verts[:,2].min():.3f}, {verts[:,2].max():.3f}]")
-                        # Print centroid
-                        centroid = verts.mean(axis=0)
-                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices centroid: X={centroid[0]:.3f}, Y={centroid[1]:.3f}, Z={centroid[2]:.3f}")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] ==============================================")
+                    if i == 0:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] debug17: ===== APPROACH B: joint_coords + centroid offset =====")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices centroid: ({verts_centroid[0]:.3f}, {verts_centroid[1]:.3f}, {verts_centroid[2]:.3f})")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords centroid: ({jc_centroid[0]:.3f}, {jc_centroid[1]:.3f}, {jc_centroid[2]:.3f})")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] 3D offset applied: ({offset_3d[0]:.3f}, {offset_3d[1]:.3f}, {offset_3d[2]:.3f})")
+                        # Show transformed key joints
+                        print(f"[{get_timestamp()}] [Motion Analyzer] Transformed joint_coords:")
+                        key_joints = [(1, "pelvis"), (16, "head"), (8, "L_ankle"), (9, "R_ankle")]
+                        for idx, name in key_joints:
+                            if idx < len(jc_transformed):
+                                print(f"[{get_timestamp()}] [Motion Analyzer]   [{idx:2d}] {name:12s}: X={jc_transformed[idx,0]:7.3f}, Y={jc_transformed[idx,1]:7.3f}, Z={jc_transformed[idx,2]:7.3f}")
+                    
+                    # Project transformed joint_coords
+                    joints_2d_B = project_points_to_2d(
+                        jc_transformed, focal, camera_t, image_size[0], image_size[1]
+                    )
+                else:
+                    # No vertices, project raw joint_coords
+                    joints_2d_B = project_points_to_2d(
+                        jc, focal, camera_t, image_size[0], image_size[1]
+                    )
                 
-                joints_2d = project_points_to_2d(
-                    jc, focal, camera_t, image_size[0], image_size[1]
-                )
-                joints_2d_source = "projected joint_coords (SMPLH 127-joint)"
-                format_2d = "SMPLH"  # Override to SMPLH since we're using joint_coords
+                if i == 0 and joints_2d_B is not None:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach B projected head[16]: ({joints_2d_B[16,0]:.1f}, {joints_2d_B[16,1]:.1f})")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach B projected pelvis[1]: ({joints_2d_B[1,0]:.1f}, {joints_2d_B[1,1]:.1f})")
+            
+            # ===== Compare both approaches with expected athlete position =====
+            # Use mask centroid as reference (athlete should be near mask center)
+            if i == 0:
+                print(f"[{get_timestamp()}] [Motion Analyzer] debug17: ===== COMPARING APPROACHES =====")
+                # Expected position: athlete #484 is roughly at x=530, y=350 (from point collector data)
+                expected_x, expected_y = 530, 350  # Approximate center of athlete
                 
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug16: Projecting joint_coords → 2D (same as mesh)")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
-                    subject_motion["joints_2d_source"] = joints_2d_source
-                    
-            elif has_kp_3d and i < len(keypoints_3d_list) and keypoints_3d_list[i] is not None:
-                # FALLBACK: Project pred_keypoints_3d (70-joint) to 2D
-                kp3d_for_projection = to_numpy(keypoints_3d_list[i])
-                if kp3d_for_projection.ndim == 3:
-                    kp3d_for_projection = kp3d_for_projection.squeeze(0)
-                    
-                joints_2d = project_points_to_2d(
-                    kp3d_for_projection, focal, camera_t, image_size[0], image_size[1]
-                )
-                joints_2d_source = "projected keypoints_3d (MHR 70-joint)"
+                if joints_2d_A is not None:
+                    # MHR head is index 0
+                    head_A = joints_2d_A[0]
+                    dist_A = np.sqrt((head_A[0] - expected_x)**2 + (head_A[1] - expected_y)**2)
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach A (pred_keypoints_2d): head at ({head_A[0]:.1f}, {head_A[1]:.1f}), dist from expected: {dist_A:.1f}px")
+                
+                if joints_2d_B is not None:
+                    # SMPLH head is index 16
+                    head_B = joints_2d_B[16]
+                    dist_B = np.sqrt((head_B[0] - expected_x)**2 + (head_B[1] - expected_y)**2)
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach B (transformed joint_coords): head at ({head_B[0]:.1f}, {head_B[1]:.1f}), dist from expected: {dist_B:.1f}px")
+                
+                # Determine winner
+                if joints_2d_A is not None and joints_2d_B is not None:
+                    head_A = joints_2d_A[0]
+                    head_B = joints_2d_B[16]
+                    dist_A = np.sqrt((head_A[0] - expected_x)**2 + (head_A[1] - expected_y)**2)
+                    dist_B = np.sqrt((head_B[0] - expected_x)**2 + (head_B[1] - expected_y)**2)
+                    winner = "A (pred_keypoints_2d)" if dist_A < dist_B else "B (transformed joint_coords)"
+                    print(f"[{get_timestamp()}] [Motion Analyzer] *** BETTER APPROACH: {winner} ***")
+            
+            # ===== SELECT BEST APPROACH FOR OUTPUT =====
+            # For now, use Approach B (transformed joint_coords) since it uses same data as mesh
+            if joints_2d_B is not None:
+                joints_2d = joints_2d_B
+                joints_2d_source = "transformed joint_coords (SMPLH 127-joint, centroid-aligned)"
+                format_2d = "SMPLH"
+            elif joints_2d_A is not None:
+                joints_2d = joints_2d_A
+                joints_2d_source = "pred_keypoints_2d (MHR 70-joint)"
                 format_2d = "MHR"
-                
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug16: Projecting keypoints_3d → 2D")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
-                    subject_motion["joints_2d_source"] = joints_2d_source
             else:
                 # LAST RESORT: Use center of image as fallback
                 joints_2d = np.zeros((22, 2))
                 joints_2d[:, 0] = image_size[0] / 2
                 joints_2d[:, 1] = image_size[1] / 2
-                joints_2d_source = "fallback (no 3D data available)"
-                
-                if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 3D keypoint data for projection!")
-                    subject_motion["joints_2d_source"] = joints_2d_source
+                joints_2d_source = "fallback (no data available)"
+                format_2d = "SMPLH"
+            
+            if i == 0:
+                print(f"[{get_timestamp()}] [Motion Analyzer] debug17: Using {joints_2d_source}")
+                subject_motion["joints_2d_source"] = joints_2d_source
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
