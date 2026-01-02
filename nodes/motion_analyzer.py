@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug15"
+VERSION = "0.5.0-debug16"
 
 import numpy as np
 import torch
@@ -473,7 +473,7 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug15: DYNAMIC INDEX MAPPING based on source
+    # debug16: DYNAMIC INDEX MAPPING based on source
     # Project joint_coords = SMPLH format
     # Project keypoints_3d = MHR format
     use_smplh_indices = "joint_coords" in joints_2d_source or "SMPLH" in joints_2d_source
@@ -506,8 +506,8 @@ def create_motion_debug_overlay(
         format_name = "MHR"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug15: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug15: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug16: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug16: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -836,7 +836,7 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug15: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # debug16: Use SMPLH indices since we PROJECT joint_coords to 2D
         # This matches the mesh renderer which uses joint_coords
         # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
@@ -863,7 +863,7 @@ class SAM4DMotionAnalyzer:
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug15: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug16: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -927,7 +927,7 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug15 fix: pred_keypoints_2d values are NOT valid pixel coords!
+            # debug16 fix: pred_keypoints_2d values are NOT valid pixel coords!
             # Instead, PROJECT joint_coords to 2D using same transform as mesh_overlay.
             # This ensures skeleton aligns with mesh.
             #
@@ -943,6 +943,32 @@ class SAM4DMotionAnalyzer:
                 if jc.ndim == 3:
                     jc = jc.squeeze(0)
                 
+                # debug16: Print RAW 3D joint_coords BEFORE projection
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug16: ===== RAW 3D JOINT_COORDS (Frame 0) =====")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords shape: {jc.shape}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords range: X=[{jc[:,0].min():.3f}, {jc[:,0].max():.3f}], Y=[{jc[:,1].min():.3f}, {jc[:,1].max():.3f}], Z=[{jc[:,2].min():.3f}, {jc[:,2].max():.3f}]")
+                    # Print key joints in 3D
+                    key_joints = [(0, "body_world"), (1, "pelvis"), (16, "head"), (8, "L_ankle"), (9, "R_ankle")]
+                    for idx, name in key_joints:
+                        if idx < len(jc):
+                            print(f"[{get_timestamp()}] [Motion Analyzer]   [{idx:2d}] {name:12s}: X={jc[idx,0]:7.3f}, Y={jc[idx,1]:7.3f}, Z={jc[idx,2]:7.3f}")
+                    
+                    # Also print cam_t for reference
+                    print(f"[{get_timestamp()}] [Motion Analyzer] pred_cam_t: [{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
+                    
+                    # Compare with vertices if available
+                    if i < len(vertices_list) and vertices_list[i] is not None:
+                        verts = to_numpy(vertices_list[i])
+                        if verts.ndim == 3:
+                            verts = verts.squeeze(0)
+                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices shape: {verts.shape}")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices range: X=[{verts[:,0].min():.3f}, {verts[:,0].max():.3f}], Y=[{verts[:,1].min():.3f}, {verts[:,1].max():.3f}], Z=[{verts[:,2].min():.3f}, {verts[:,2].max():.3f}]")
+                        # Print centroid
+                        centroid = verts.mean(axis=0)
+                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices centroid: X={centroid[0]:.3f}, Y={centroid[1]:.3f}, Z={centroid[2]:.3f}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] ==============================================")
+                
                 joints_2d = project_points_to_2d(
                     jc, focal, camera_t, image_size[0], image_size[1]
                 )
@@ -950,8 +976,7 @@ class SAM4DMotionAnalyzer:
                 format_2d = "SMPLH"  # Override to SMPLH since we're using joint_coords
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug15: Projecting joint_coords → 2D (same as mesh)")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords shape: {jc.shape}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug16: Projecting joint_coords → 2D (same as mesh)")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
                     subject_motion["joints_2d_source"] = joints_2d_source
                     
@@ -968,7 +993,7 @@ class SAM4DMotionAnalyzer:
                 format_2d = "MHR"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug15: Projecting keypoints_3d → 2D")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug16: Projecting keypoints_3d → 2D")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Projection: focal={focal:.1f}px, cam_t=[{camera_t[0]:.3f}, {camera_t[1]:.3f}, {camera_t[2]:.3f}]")
                     subject_motion["joints_2d_source"] = joints_2d_source
             else:

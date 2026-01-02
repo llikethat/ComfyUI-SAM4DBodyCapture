@@ -68,6 +68,9 @@ def create_metadata_locator(metadata):
     These custom properties will be exported to FBX and visible
     in Maya's Extra Attributes when use_custom_properties=True.
     
+    All values are stored as STRINGS to appear as non-editable text fields
+    in Maya (floats would appear as sliders).
+    
     Args:
         metadata: Dict containing metadata (can have nested dicts)
         
@@ -84,23 +87,17 @@ def create_metadata_locator(metadata):
     empty.empty_display_size = 0.1  # Small display size
     
     def add_properties(obj, data, prefix=""):
-        """Recursively add properties, flattening nested dicts."""
+        """Recursively add properties, flattening nested dicts.
+        All values converted to strings for Maya text field display."""
         for key, value in data.items():
             prop_name = f"{prefix}{key}" if prefix else key
             
             if isinstance(value, dict):
                 # Flatten nested dict with underscore separator
                 add_properties(obj, value, f"{prop_name}_")
-            elif isinstance(value, (list, tuple)):
-                # Convert lists to strings for FBX compatibility
-                obj[prop_name] = str(value)
-            elif isinstance(value, bool):
-                # Booleans as integers for better compatibility
-                obj[prop_name] = 1 if value else 0
-            elif isinstance(value, (int, float, str)):
-                obj[prop_name] = value
             else:
-                # Fallback: convert to string
+                # Convert ALL values to strings for Maya text fields
+                # (floats would show as sliders, strings show as text)
                 obj[prop_name] = str(value)
     
     add_properties(empty, metadata)
