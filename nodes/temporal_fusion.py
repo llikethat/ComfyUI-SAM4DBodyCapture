@@ -141,6 +141,12 @@ def smooth_params_sequence(
             smoothed_params[key] = [avg_betas[0]] * T
             continue
         
+        # Don't smooth 2D keypoints - they are pixel coordinates from the model
+        # and should remain as ground truth values
+        if key == "keypoints_2d":
+            smoothed_params[key] = values
+            continue
+        
         # Smooth other parameters
         if arr.ndim == 1:
             if method == "gaussian":
