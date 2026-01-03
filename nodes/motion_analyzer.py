@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug18"
+VERSION = "0.5.0-debug19"
 
 import numpy as np
 import torch
@@ -473,26 +473,13 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug18: DYNAMIC INDEX MAPPING based on source
-    # Project joint_coords = SMPLH format
-    # Project keypoints_3d = MHR format
-    use_smplh_indices = "joint_coords" in joints_2d_source or "SMPLH" in joints_2d_source
+    # debug19: DYNAMIC INDEX MAPPING based on source
+    # pred_keypoints_2d = MHR format (confirmed correct!)
+    # joint_coords projected = SMPLH format (fallback)
+    use_mhr_indices = "pred_keypoints_2d" in joints_2d_source or "MHR" in joints_2d_source
     
-    if use_smplh_indices:
-        # SMPLH 127-joint format (joint_coords projected)
-        idx_map = {
-            "HEAD": SMPLHJoints.HEAD,            # 16
-            "PELVIS": SMPLHJoints.PELVIS,        # 1
-            "L_WRIST": SMPLHJoints.L_WRIST,      # 21
-            "R_WRIST": SMPLHJoints.R_WRIST,      # 22
-            "L_ANKLE": SMPLHJoints.L_ANKLE,      # 8
-            "R_ANKLE": SMPLHJoints.R_ANKLE,      # 9
-        }
-        max_draw_index = SMPLHJoints.NUM_BODY_JOINTS  # 24
-        joint_names = SMPLHJoints.JOINT_NAMES
-        format_name = "SMPLH"
-    else:
-        # MHR 70-joint format (keypoints_3d projected)
+    if use_mhr_indices:
+        # MHR 70-joint format (pred_keypoints_2d - confirmed correct!)
         idx_map = {
             "HEAD": MHRJoints.HEAD,              # 0
             "PELVIS": MHRJoints.PELVIS,          # 8 (R_HIP as proxy)
@@ -504,10 +491,23 @@ def create_motion_debug_overlay(
         max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 18
         joint_names = MHRJoints.JOINT_NAMES
         format_name = "MHR"
+    else:
+        # SMPLH 127-joint format (joint_coords projected - fallback)
+        idx_map = {
+            "HEAD": SMPLHJoints.HEAD,            # 16
+            "PELVIS": SMPLHJoints.PELVIS,        # 1
+            "L_WRIST": SMPLHJoints.L_WRIST,      # 21
+            "R_WRIST": SMPLHJoints.R_WRIST,      # 22
+            "L_ANKLE": SMPLHJoints.L_ANKLE,      # 8
+            "R_ANKLE": SMPLHJoints.R_ANKLE,      # 9
+        }
+        max_draw_index = SMPLHJoints.NUM_BODY_JOINTS  # 24
+        joint_names = SMPLHJoints.JOINT_NAMES
+        format_name = "SMPLH"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug18: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug18: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug19: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug19: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -836,34 +836,36 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug18: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # debug19: Use SMPLH indices since we PROJECT joint_coords to 2D
         # This matches the mesh renderer which uses joint_coords
         # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
         # Determine which format will be used for 2D joints
-        use_smplh_for_2d = has_joint_coords  # Project joint_coords = SMPLH format
+        # debug19: CONFIRMED pred_keypoints_2d (MHR) is correct!
+        # Use MHR format when pred_keypoints_2d is available
+        use_mhr_for_2d = has_kp_2d  # pred_keypoints_2d = MHR format (confirmed correct)
         
-        if use_smplh_for_2d:
-            # SMPLH format indices (for projected joint_coords)
-            pelvis_idx_2d = SMPLHJoints.PELVIS       # 1
-            head_idx_2d = SMPLHJoints.HEAD           # 16
-            left_ankle_idx_2d = SMPLHJoints.L_ANKLE  # 8
-            right_ankle_idx_2d = SMPLHJoints.R_ANKLE # 9
-            joint_names_2d = SMPLHJoints.JOINT_NAMES
-            format_2d = "SMPLH"
-        else:
-            # MHR format indices (for projected keypoints_3d fallback)
+        if use_mhr_for_2d:
+            # MHR format indices (for pred_keypoints_2d - confirmed correct!)
             pelvis_idx_2d = MHRJoints.PELVIS       # 8 (R_HIP as proxy)
             head_idx_2d = MHRJoints.HEAD           # 0
             left_ankle_idx_2d = MHRJoints.L_ANKLE  # 13
             right_ankle_idx_2d = MHRJoints.R_ANKLE # 10
             joint_names_2d = MHRJoints.JOINT_NAMES
             format_2d = "MHR"
+        else:
+            # SMPLH format indices (fallback for projected joint_coords)
+            pelvis_idx_2d = SMPLHJoints.PELVIS       # 1
+            head_idx_2d = SMPLHJoints.HEAD           # 16
+            left_ankle_idx_2d = SMPLHJoints.L_ANKLE  # 8
+            right_ankle_idx_2d = SMPLHJoints.R_ANKLE # 9
+            joint_names_2d = SMPLHJoints.JOINT_NAMES
+            format_2d = "SMPLH"
         
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug18: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug19: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -927,127 +929,60 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug18: Test TWO approaches to fix skeleton alignment:
+            # debug19: CONFIRMED pred_keypoints_2d is CORRECT!
+            # Joint Debug Overlay showed:
+            # - BLUE (pred_keypoints_2d) aligns with athlete
+            # - RED (joint_coords projected) is wrong
             # 
-            # Approach A: pred_keypoints_2d + bbox offset (if it's in crop coordinates)
-            # Approach B: Transform joint_coords using vertices centroid offset
-            #
-            # We'll compute BOTH and log results to see which aligns better
+            # Use pred_keypoints_2d directly with MHR format (70 joints)
             
-            joints_2d_A = None  # Approach A result
-            joints_2d_B = None  # Approach B result
-            
-            # Get vertices for Approach B
-            verts = None
-            if i < len(vertices_list) and vertices_list[i] is not None:
-                verts = to_numpy(vertices_list[i])
-                if verts.ndim == 3:
-                    verts = verts.squeeze(0)
-            
-            # ===== APPROACH A: pred_keypoints_2d with potential bbox offset =====
             if has_kp_2d and i < len(keypoints_2d_list) and keypoints_2d_list[i] is not None:
+                # BEST: Use pred_keypoints_2d directly - confirmed correct!
                 kp2d = to_numpy(keypoints_2d_list[i])
                 if kp2d.ndim == 3:
                     kp2d = kp2d.squeeze(0)
                 if kp2d.shape[1] >= 2:
-                    joints_2d_A = kp2d[:, :2].copy()
+                    joints_2d = kp2d[:, :2].copy()
                 else:
-                    joints_2d_A = kp2d.copy()
+                    joints_2d = kp2d.copy()
+                
+                joints_2d_source = "pred_keypoints_2d (MHR 70-joint) - DIRECT"
+                format_2d = "MHR"  # Use MHR indices since pred_keypoints_2d is MHR format
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug18: ===== APPROACH A: pred_keypoints_2d =====")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Raw pred_keypoints_2d[0] (head): ({joints_2d_A[0,0]:.1f}, {joints_2d_A[0,1]:.1f})")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug19: Using pred_keypoints_2d DIRECTLY (confirmed correct)")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] pred_keypoints_2d shape: {joints_2d.shape}")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] Head (MHR idx 0): ({joints_2d[0,0]:.1f}, {joints_2d[0,1]:.1f})")
+                    if len(joints_2d) > 9:
+                        print(f"[{get_timestamp()}] [Motion Analyzer] Pelvis area (MHR idx 9): ({joints_2d[9,0]:.1f}, {joints_2d[9,1]:.1f})")
+                    subject_motion["joints_2d_source"] = joints_2d_source
             
-            # ===== APPROACH B: joint_coords transformed with vertices centroid offset =====
-            if has_joint_coords and i < len(joint_coords_list) and joint_coords_list[i] is not None:
+            elif has_joint_coords and i < len(joint_coords_list) and joint_coords_list[i] is not None:
+                # FALLBACK: Project joint_coords if pred_keypoints_2d not available
                 jc = to_numpy(joint_coords_list[i])
                 if jc.ndim == 3:
                     jc = jc.squeeze(0)
                 
-                # Compute offset between vertices centroid and joint_coords centroid
-                if verts is not None:
-                    verts_centroid = verts.mean(axis=0)
-                    jc_centroid = jc.mean(axis=0)
-                    offset_3d = verts_centroid - jc_centroid
-                    
-                    # Apply offset to align joint_coords with vertices
-                    jc_transformed = jc + offset_3d
-                    
-                    if i == 0:
-                        print(f"[{get_timestamp()}] [Motion Analyzer] debug18: ===== APPROACH B: joint_coords + centroid offset =====")
-                        print(f"[{get_timestamp()}] [Motion Analyzer] vertices centroid: ({verts_centroid[0]:.3f}, {verts_centroid[1]:.3f}, {verts_centroid[2]:.3f})")
-                        print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords centroid: ({jc_centroid[0]:.3f}, {jc_centroid[1]:.3f}, {jc_centroid[2]:.3f})")
-                        print(f"[{get_timestamp()}] [Motion Analyzer] 3D offset applied: ({offset_3d[0]:.3f}, {offset_3d[1]:.3f}, {offset_3d[2]:.3f})")
-                        # Show transformed key joints
-                        print(f"[{get_timestamp()}] [Motion Analyzer] Transformed joint_coords:")
-                        key_joints = [(1, "pelvis"), (16, "head"), (8, "L_ankle"), (9, "R_ankle")]
-                        for idx, name in key_joints:
-                            if idx < len(jc_transformed):
-                                print(f"[{get_timestamp()}] [Motion Analyzer]   [{idx:2d}] {name:12s}: X={jc_transformed[idx,0]:7.3f}, Y={jc_transformed[idx,1]:7.3f}, Z={jc_transformed[idx,2]:7.3f}")
-                    
-                    # Project transformed joint_coords
-                    joints_2d_B = project_points_to_2d(
-                        jc_transformed, focal, camera_t, image_size[0], image_size[1]
-                    )
-                else:
-                    # No vertices, project raw joint_coords
-                    joints_2d_B = project_points_to_2d(
-                        jc, focal, camera_t, image_size[0], image_size[1]
-                    )
-                
-                if i == 0 and joints_2d_B is not None:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach B projected head[16]: ({joints_2d_B[16,0]:.1f}, {joints_2d_B[16,1]:.1f})")
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach B projected pelvis[1]: ({joints_2d_B[1,0]:.1f}, {joints_2d_B[1,1]:.1f})")
-            
-            # ===== Compare both approaches with expected athlete position =====
-            # Use mask centroid as reference (athlete should be near mask center)
-            if i == 0:
-                print(f"[{get_timestamp()}] [Motion Analyzer] debug18: ===== COMPARING APPROACHES =====")
-                # Expected position: athlete #484 is roughly at x=530, y=350 (from point collector data)
-                expected_x, expected_y = 530, 350  # Approximate center of athlete
-                
-                if joints_2d_A is not None:
-                    # MHR head is index 0
-                    head_A = joints_2d_A[0]
-                    dist_A = np.sqrt((head_A[0] - expected_x)**2 + (head_A[1] - expected_y)**2)
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach A (pred_keypoints_2d): head at ({head_A[0]:.1f}, {head_A[1]:.1f}), dist from expected: {dist_A:.1f}px")
-                
-                if joints_2d_B is not None:
-                    # SMPLH head is index 16
-                    head_B = joints_2d_B[16]
-                    dist_B = np.sqrt((head_B[0] - expected_x)**2 + (head_B[1] - expected_y)**2)
-                    print(f"[{get_timestamp()}] [Motion Analyzer] Approach B (transformed joint_coords): head at ({head_B[0]:.1f}, {head_B[1]:.1f}), dist from expected: {dist_B:.1f}px")
-                
-                # Determine winner
-                if joints_2d_A is not None and joints_2d_B is not None:
-                    head_A = joints_2d_A[0]
-                    head_B = joints_2d_B[16]
-                    dist_A = np.sqrt((head_A[0] - expected_x)**2 + (head_A[1] - expected_y)**2)
-                    dist_B = np.sqrt((head_B[0] - expected_x)**2 + (head_B[1] - expected_y)**2)
-                    winner = "A (pred_keypoints_2d)" if dist_A < dist_B else "B (transformed joint_coords)"
-                    print(f"[{get_timestamp()}] [Motion Analyzer] *** BETTER APPROACH: {winner} ***")
-            
-            # ===== SELECT BEST APPROACH FOR OUTPUT =====
-            # For now, use Approach B (transformed joint_coords) since it uses same data as mesh
-            if joints_2d_B is not None:
-                joints_2d = joints_2d_B
-                joints_2d_source = "transformed joint_coords (SMPLH 127-joint, centroid-aligned)"
+                joints_2d = project_points_to_2d(
+                    jc, focal, camera_t, image_size[0], image_size[1]
+                )
+                joints_2d_source = "projected joint_coords (SMPLH 127-joint) - FALLBACK"
                 format_2d = "SMPLH"
-            elif joints_2d_A is not None:
-                joints_2d = joints_2d_A
-                joints_2d_source = "pred_keypoints_2d (MHR 70-joint)"
-                format_2d = "MHR"
+                
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug19: FALLBACK to joint_coords projection")
+                    subject_motion["joints_2d_source"] = joints_2d_source
             else:
                 # LAST RESORT: Use center of image as fallback
                 joints_2d = np.zeros((22, 2))
                 joints_2d[:, 0] = image_size[0] / 2
                 joints_2d[:, 1] = image_size[1] / 2
                 joints_2d_source = "fallback (no data available)"
-                format_2d = "SMPLH"
-            
-            if i == 0:
-                print(f"[{get_timestamp()}] [Motion Analyzer] debug18: Using {joints_2d_source}")
-                subject_motion["joints_2d_source"] = joints_2d_source
+                format_2d = "MHR"
+                
+                if i == 0:
+                    print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 2D keypoint data!")
+                    subject_motion["joints_2d_source"] = joints_2d_source
             
             subject_motion["joints_2d"].append(joints_2d)
             subject_motion["joints_3d"].append(keypoints_3d * scale_factor)
