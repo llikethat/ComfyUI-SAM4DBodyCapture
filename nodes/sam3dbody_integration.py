@@ -10,7 +10,7 @@ Provides integrated SAM3DBody nodes with:
 """
 
 # Version for logging
-VERSION = "0.5.0-debug17"
+VERSION = "0.5.0-debug18"
 
 import os
 import sys

@@ -226,6 +226,25 @@ except ImportError as e:
 except Exception as e:
     print(f"[SAM4DBodyCapture] Error loading Motion Analysis nodes: {e}")
 
+# ==================== Debug Nodes ====================
+try:
+    from .nodes import joint_debug_overlay
+    
+    NODE_CLASS_MAPPINGS.update({
+        "SAM4D_JointDebugOverlay": joint_debug_overlay.JointDebugOverlay,
+    })
+    
+    NODE_DISPLAY_NAME_MAPPINGS.update({
+        "SAM4D_JointDebugOverlay": "🔍 Joint Debug Overlay",
+    })
+    
+    print(f"[SAM4DBodyCapture] Debug nodes loaded")
+    
+except ImportError as e:
+    print(f"[SAM4DBodyCapture] Debug nodes not available: {e}")
+except Exception as e:
+    print(f"[SAM4DBodyCapture] Error loading Debug nodes: {e}")
+
 # ==================== Final Setup ====================
 print(f"[SAM4DBodyCapture] v{__version__} loaded {len(NODE_CLASS_MAPPINGS)} nodes")
 

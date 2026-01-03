@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug17"
+VERSION = "0.5.0-debug18"
 
 import numpy as np
 import torch
@@ -473,7 +473,7 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug17: DYNAMIC INDEX MAPPING based on source
+    # debug18: DYNAMIC INDEX MAPPING based on source
     # Project joint_coords = SMPLH format
     # Project keypoints_3d = MHR format
     use_smplh_indices = "joint_coords" in joints_2d_source or "SMPLH" in joints_2d_source
@@ -506,8 +506,8 @@ def create_motion_debug_overlay(
         format_name = "MHR"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug17: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug17: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug18: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug18: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -836,7 +836,7 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug17: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # debug18: Use SMPLH indices since we PROJECT joint_coords to 2D
         # This matches the mesh renderer which uses joint_coords
         # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
@@ -863,7 +863,7 @@ class SAM4DMotionAnalyzer:
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug17: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug18: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -927,7 +927,7 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug17: Test TWO approaches to fix skeleton alignment:
+            # debug18: Test TWO approaches to fix skeleton alignment:
             # 
             # Approach A: pred_keypoints_2d + bbox offset (if it's in crop coordinates)
             # Approach B: Transform joint_coords using vertices centroid offset
@@ -955,7 +955,7 @@ class SAM4DMotionAnalyzer:
                     joints_2d_A = kp2d.copy()
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug17: ===== APPROACH A: pred_keypoints_2d =====")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug18: ===== APPROACH A: pred_keypoints_2d =====")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Raw pred_keypoints_2d[0] (head): ({joints_2d_A[0,0]:.1f}, {joints_2d_A[0,1]:.1f})")
             
             # ===== APPROACH B: joint_coords transformed with vertices centroid offset =====
@@ -974,7 +974,7 @@ class SAM4DMotionAnalyzer:
                     jc_transformed = jc + offset_3d
                     
                     if i == 0:
-                        print(f"[{get_timestamp()}] [Motion Analyzer] debug17: ===== APPROACH B: joint_coords + centroid offset =====")
+                        print(f"[{get_timestamp()}] [Motion Analyzer] debug18: ===== APPROACH B: joint_coords + centroid offset =====")
                         print(f"[{get_timestamp()}] [Motion Analyzer] vertices centroid: ({verts_centroid[0]:.3f}, {verts_centroid[1]:.3f}, {verts_centroid[2]:.3f})")
                         print(f"[{get_timestamp()}] [Motion Analyzer] joint_coords centroid: ({jc_centroid[0]:.3f}, {jc_centroid[1]:.3f}, {jc_centroid[2]:.3f})")
                         print(f"[{get_timestamp()}] [Motion Analyzer] 3D offset applied: ({offset_3d[0]:.3f}, {offset_3d[1]:.3f}, {offset_3d[2]:.3f})")
@@ -1002,7 +1002,7 @@ class SAM4DMotionAnalyzer:
             # ===== Compare both approaches with expected athlete position =====
             # Use mask centroid as reference (athlete should be near mask center)
             if i == 0:
-                print(f"[{get_timestamp()}] [Motion Analyzer] debug17: ===== COMPARING APPROACHES =====")
+                print(f"[{get_timestamp()}] [Motion Analyzer] debug18: ===== COMPARING APPROACHES =====")
                 # Expected position: athlete #484 is roughly at x=530, y=350 (from point collector data)
                 expected_x, expected_y = 530, 350  # Approximate center of athlete
                 
@@ -1046,7 +1046,7 @@ class SAM4DMotionAnalyzer:
                 format_2d = "SMPLH"
             
             if i == 0:
-                print(f"[{get_timestamp()}] [Motion Analyzer] debug17: Using {joints_2d_source}")
+                print(f"[{get_timestamp()}] [Motion Analyzer] debug18: Using {joints_2d_source}")
                 subject_motion["joints_2d_source"] = joints_2d_source
             
             subject_motion["joints_2d"].append(joints_2d)
