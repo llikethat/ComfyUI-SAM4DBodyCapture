@@ -223,7 +223,7 @@ def get_world_offset_from_cam_t(pred_cam_t, up_axis):
     return Vector((0, 0, 0))
 
 
-def get_body_offset_from_cam_t(pred_cam_t, up_axis):
+def get_body_offset_from_cam_t(pred_cam_t, up_axis, include_depth=False):
     """
     Get offset to apply to body mesh/skeleton for correct camera alignment.
     
@@ -247,27 +247,37 @@ def get_body_offset_from_cam_t(pred_cam_t, up_axis):
     - Blender X → Maya X
     - Blender Y → Maya Z  
     - Blender Z → Maya Y
+    
+    Args:
+        pred_cam_t: Camera translation [tx, ty, tz]
+        up_axis: Coordinate system up axis ("Y", "Z", "-Y", "-Z")
+        include_depth: If True, include tz in the body position (debug21)
     """
     if not pred_cam_t or len(pred_cam_t) < 3:
         return Vector((0, 0, 0))
     
     tx, ty, tz = pred_cam_t[0], pred_cam_t[1], pred_cam_t[2]
     
+    # debug21: Optionally include depth in body position
+    # This makes the body move in Z axis based on distance from camera
+    depth_offset = tz if include_depth else 0
+    
     # Apply based on up_axis
     # NOTE: ty is NEGATED to match camera view convention
     if up_axis == "Y":
         # For Maya: tx→horizontal, -ty→vertical in camera view
         # Blender (X, Y, Z) → Maya (X, Z, Y)
-        return Vector((tx, -ty, 0))
+        # depth_offset goes to Blender Z → Maya Y (depth axis)
+        return Vector((tx, -ty, depth_offset))
     elif up_axis == "Z":
         # Blender native Z-up
-        return Vector((tx, 0, -ty))
+        return Vector((tx, depth_offset, -ty))
     elif up_axis == "-Y":
-        return Vector((tx, ty, 0))  # Double negative = positive
+        return Vector((tx, ty, -depth_offset))  # Double negative = positive
     elif up_axis == "-Z":
-        return Vector((tx, 0, ty))  # Double negative = positive
+        return Vector((tx, -depth_offset, ty))  # Double negative = positive
     else:
-        return Vector((tx, -ty, 0))
+        return Vector((tx, -ty, depth_offset))
 
 
 def apply_animated_body_offset(mesh_obj, armature_obj, frames, solved_camera_rotations, up_axis, frame_offset, smoothing=5):
@@ -1562,6 +1572,7 @@ def main():
     camera_static = data.get("camera_static", False)  # Disable all camera animation
     camera_smoothing = data.get("camera_smoothing", 0)  # Smoothing window for camera animation
     solved_camera_rotations = data.get("solved_camera_rotations", None)  # From Camera Rotation Solver
+    include_depth_position = data.get("include_depth_position", False)  # debug21: Include tz in body position
     metadata = data.get("metadata", {})  # Metadata for FBX custom properties
     
     print(f"[Blender] {len(frames)} frames at {fps} fps")
@@ -1570,6 +1581,7 @@ def main():
     print(f"[Blender] World translation mode: {world_translation_mode}")
     print(f"[Blender] Skeleton mode: {skeleton_mode}")
     print(f"[Blender] Flip X: {flip_x}")
+    print(f"[Blender] Include depth position: {include_depth_position}")
     print(f"[Blender] Animate camera: {animate_camera}")
     print(f"[Blender] Camera follow root: {camera_follow_root}")
     print(f"[Blender] Camera use rotation: {camera_use_rotation}")
@@ -1626,8 +1638,8 @@ def main():
         
         # Get body offset for aligning body relative to camera (STATIC from frame 0)
         first_cam_t = frames[0].get("pred_cam_t")
-        body_offset = get_body_offset_from_cam_t(first_cam_t, up_axis)
-        print(f"[Blender] Body offset for camera alignment: {body_offset}")
+        body_offset = get_body_offset_from_cam_t(first_cam_t, up_axis, include_depth_position)
+        print(f"[Blender] Body offset for camera alignment: {body_offset} (include_depth={include_depth_position})")
     
     # Create mesh with shape keys
     mesh_obj = None

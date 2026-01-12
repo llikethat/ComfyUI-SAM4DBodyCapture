@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug20"
+VERSION = "0.5.0-debug21"
 
 import numpy as np
 import torch
@@ -41,35 +41,42 @@ def get_timestamp():
 # ============================================================================
 
 class MHRJoints:
-    """MHR 70-joint format indices (used by pred_keypoints_2d).
+    """COCO 17-keypoint format used by SAM3DBody's pred_keypoints_2d.
     
-    This is a detection-based format where joints are ordered differently
-    from the SMPLH rigging format.
+    SAM3DBody outputs 70 joints: 17 COCO body + hands + face.
+    debug21: Fixed to use COCO format based on visual evidence.
+    
+    COCO format (first 17 joints):
+    0: nose, 1: left_eye, 2: right_eye, 3: left_ear, 4: right_ear,
+    5: left_shoulder, 6: right_shoulder, 7: left_elbow, 8: right_elbow,
+    9: left_wrist, 10: right_wrist, 11: left_hip, 12: right_hip,
+    13: left_knee, 14: right_knee, 15: left_ankle, 16: right_ankle
     """
-    # Key body joints
-    HEAD = 0              # Head/nose
-    NECK = 1              # Neck
-    R_SHOULDER = 2        # Right shoulder
-    R_ELBOW = 3           # Right elbow
-    R_WRIST = 4           # Right wrist
+    # COCO format body joints
+    NOSE = 0              # Nose (use as HEAD proxy)
+    L_EYE = 1             # Left eye
+    R_EYE = 2             # Right eye
+    L_EAR = 3             # Left ear
+    R_EAR = 4             # Right ear
     L_SHOULDER = 5        # Left shoulder
-    L_ELBOW = 6           # Left elbow
-    L_WRIST = 7           # Left wrist
-    R_HIP = 8             # Right hip
-    R_KNEE = 9            # Right knee
-    R_ANKLE = 10          # Right ankle
+    R_SHOULDER = 6        # Right shoulder
+    L_ELBOW = 7           # Left elbow
+    R_ELBOW = 8           # Right elbow
+    L_WRIST = 9           # Left wrist
+    R_WRIST = 10          # Right wrist
     L_HIP = 11            # Left hip
-    L_KNEE = 12           # Left knee
-    L_ANKLE = 13          # Left ankle
-    R_EYE = 14            # Right eye
-    L_EYE = 15            # Left eye
-    R_EAR = 16            # Right ear
-    L_EAR = 17            # Left ear
+    R_HIP = 12            # Right hip
+    L_KNEE = 13           # Left knee
+    R_KNEE = 14           # Right knee
+    L_ANKLE = 15          # Left ankle
+    R_ANKLE = 16          # Right ankle
     
-    # Pelvis approximation (midpoint of hips, use R_HIP or L_HIP as proxy)
-    PELVIS = 8            # Use R_HIP as pelvis proxy
+    # Aliases for compatibility
+    HEAD = 0              # Use nose as head proxy
+    NECK = 0              # Use nose as neck proxy (COCO has no neck)
+    PELVIS = 11           # Use L_HIP as pelvis proxy
     
-    # Aliases
+    # Long-form aliases
     LEFT_SHOULDER = L_SHOULDER
     LEFT_ELBOW = L_ELBOW
     LEFT_WRIST = L_WRIST
@@ -84,15 +91,14 @@ class MHRJoints:
     RIGHT_ANKLE = R_ANKLE
     
     NUM_JOINTS = 70
-    NUM_BODY_JOINTS = 18  # First 18 are body joints
+    NUM_BODY_JOINTS = 17  # First 17 are COCO body joints
     
-    # Joint names for labeling
+    # Joint names for labeling (COCO format)
     JOINT_NAMES = {
-        0: "head", 1: "neck", 2: "R_shldr", 3: "R_elbow", 4: "R_wrist",
-        5: "L_shldr", 6: "L_elbow", 7: "L_wrist",
-        8: "R_hip", 9: "R_knee", 10: "R_ankle",
-        11: "L_hip", 12: "L_knee", 13: "L_ankle",
-        14: "R_eye", 15: "L_eye", 16: "R_ear", 17: "L_ear",
+        0: "nose", 1: "L_eye", 2: "R_eye", 3: "L_ear", 4: "R_ear",
+        5: "L_shldr", 6: "R_shldr", 7: "L_elbow", 8: "R_elbow",
+        9: "L_wrist", 10: "R_wrist", 11: "L_hip", 12: "R_hip",
+        13: "L_knee", 14: "R_knee", 15: "L_ankle", 16: "R_ankle",
     }
 
 
@@ -473,24 +479,24 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug20: DYNAMIC INDEX MAPPING based on source
-    # pred_keypoints_2d = MHR format (confirmed correct!)
+    # debug21: DYNAMIC INDEX MAPPING based on source
+    # pred_keypoints_2d = COCO format (confirmed correct!)
     # joint_coords projected = SMPLH format (fallback)
-    use_mhr_indices = "pred_keypoints_2d" in joints_2d_source or "MHR" in joints_2d_source
+    use_coco_indices = "pred_keypoints_2d" in joints_2d_source or "MHR" in joints_2d_source or "COCO" in joints_2d_source
     
-    if use_mhr_indices:
-        # MHR 70-joint format (pred_keypoints_2d - confirmed correct!)
+    if use_coco_indices:
+        # MHR/COCO 17-joint format (pred_keypoints_2d - confirmed correct!)
         idx_map = {
-            "HEAD": MHRJoints.HEAD,              # 0
-            "PELVIS": MHRJoints.PELVIS,          # 8 (R_HIP as proxy)
-            "L_WRIST": MHRJoints.L_WRIST,        # 7
-            "R_WRIST": MHRJoints.R_WRIST,        # 4
-            "L_ANKLE": MHRJoints.L_ANKLE,        # 13
-            "R_ANKLE": MHRJoints.R_ANKLE,        # 10
+            "HEAD": MHRJoints.HEAD,              # 0 (nose)
+            "PELVIS": MHRJoints.PELVIS,          # 11 (L_HIP)
+            "L_WRIST": MHRJoints.L_WRIST,        # 9
+            "R_WRIST": MHRJoints.R_WRIST,        # 10
+            "L_ANKLE": MHRJoints.L_ANKLE,        # 15
+            "R_ANKLE": MHRJoints.R_ANKLE,        # 16
         }
-        max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 18
+        max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 17
         joint_names = MHRJoints.JOINT_NAMES
-        format_name = "MHR"
+        format_name = "COCO"
     else:
         # SMPLH 127-joint format (joint_coords projected - fallback)
         idx_map = {
@@ -506,8 +512,8 @@ def create_motion_debug_overlay(
         format_name = "SMPLH"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug20: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug20: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug21: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug21: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -836,23 +842,23 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug20: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # debug21: Use SMPLH indices since we PROJECT joint_coords to 2D
         # This matches the mesh renderer which uses joint_coords
         # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
         # Determine which format will be used for 2D joints
-        # debug20: CONFIRMED pred_keypoints_2d (MHR) is correct!
+        # debug21: CONFIRMED pred_keypoints_2d (MHR) is correct!
         # Use MHR format when pred_keypoints_2d is available
         use_mhr_for_2d = has_kp_2d  # pred_keypoints_2d = MHR format (confirmed correct)
         
         if use_mhr_for_2d:
-            # MHR format indices (for pred_keypoints_2d - confirmed correct!)
-            pelvis_idx_2d = MHRJoints.PELVIS       # 8 (R_HIP as proxy)
-            head_idx_2d = MHRJoints.HEAD           # 0
-            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 13
-            right_ankle_idx_2d = MHRJoints.R_ANKLE # 10
+            # COCO format indices (for pred_keypoints_2d - confirmed correct!)
+            pelvis_idx_2d = MHRJoints.PELVIS       # 11 (L_HIP)
+            head_idx_2d = MHRJoints.HEAD           # 0 (nose)
+            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 15
+            right_ankle_idx_2d = MHRJoints.R_ANKLE # 16
             joint_names_2d = MHRJoints.JOINT_NAMES
-            format_2d = "MHR"
+            format_2d = "COCO"
         else:
             # SMPLH format indices (fallback for projected joint_coords)
             pelvis_idx_2d = SMPLHJoints.PELVIS       # 1
@@ -865,7 +871,7 @@ class SAM4DMotionAnalyzer:
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug20: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug21: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -929,7 +935,7 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug20: CONFIRMED pred_keypoints_2d is CORRECT!
+            # debug21: CONFIRMED pred_keypoints_2d is CORRECT!
             # Joint Debug Overlay showed:
             # - BLUE (pred_keypoints_2d) aligns with athlete
             # - RED (joint_coords projected) is wrong
@@ -947,10 +953,10 @@ class SAM4DMotionAnalyzer:
                     joints_2d = kp2d.copy()
                 
                 joints_2d_source = "pred_keypoints_2d (MHR 70-joint) - DIRECT"
-                format_2d = "MHR"  # Use MHR indices since pred_keypoints_2d is MHR format
+                format_2d = "COCO"  # Use COCO indices since pred_keypoints_2d uses COCO format
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug20: Using pred_keypoints_2d DIRECTLY (confirmed correct)")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug21: Using pred_keypoints_2d DIRECTLY (confirmed correct)")
                     print(f"[{get_timestamp()}] [Motion Analyzer] pred_keypoints_2d shape: {joints_2d.shape}")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Head (MHR idx 0): ({joints_2d[0,0]:.1f}, {joints_2d[0,1]:.1f})")
                     if len(joints_2d) > 9:
@@ -970,7 +976,7 @@ class SAM4DMotionAnalyzer:
                 format_2d = "SMPLH"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug20: FALLBACK to joint_coords projection")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug21: FALLBACK to joint_coords projection")
                     subject_motion["joints_2d_source"] = joints_2d_source
             else:
                 # LAST RESORT: Use center of image as fallback
@@ -978,7 +984,7 @@ class SAM4DMotionAnalyzer:
                 joints_2d[:, 0] = image_size[0] / 2
                 joints_2d[:, 1] = image_size[1] / 2
                 joints_2d_source = "fallback (no data available)"
-                format_2d = "MHR"
+                format_2d = "COCO"
                 
                 if i == 0:
                     print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 2D keypoint data!")
@@ -995,7 +1001,7 @@ class SAM4DMotionAnalyzer:
                 print(f"[{get_timestamp()}] [Motion Analyzer] 2D format: {format_2d}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] Image size: {image_size[0]}x{image_size[1]}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] --- Body Joints ({format_2d} indices) ---")
-                num_to_print = min(18 if format_2d == "MHR" else 24, len(joints_2d))
+                num_to_print = min(17 if format_2d == "COCO" else 24, len(joints_2d))
                 for j_idx in range(num_to_print):
                     j_name = joint_names_2d.get(j_idx, f"joint{j_idx}")
                     j_x, j_y = joints_2d[j_idx][0], joints_2d[j_idx][1]

@@ -20,7 +20,7 @@ from typing import Dict, Tuple, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 
 # Version for logging (sync with other files)
-VERSION = "0.5.0-debug20"
+VERSION = "0.5.0-debug21"
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -577,6 +577,10 @@ class SAM4DExportCharacterFBX:
                     "default": True,
                     "tooltip": "Include camera in FBX (recommended)"
                 }),
+                "include_depth_position": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Include depth (tz) in body position. When enabled, body moves in Z axis based on distance from camera. Matches mesh overlay depth."
+                }),
                 "sensor_width": ("FLOAT", {
                     "default": 36.0,
                     "min": 1.0,
@@ -638,6 +642,7 @@ class SAM4DExportCharacterFBX:
         fps: float = 30.0,
         flip_x: bool = True,
         include_camera: bool = True,
+        include_depth_position: bool = False,
         sensor_width: float = 36.0,
         skip_first_frames: int = 0,
     ):
@@ -796,6 +801,7 @@ class SAM4DExportCharacterFBX:
             "world_translation_mode": "root",  # Character at origin
             "skeleton_mode": "positions",
             "sensor_width": sensor_width,
+            "include_depth_position": include_depth_position,  # debug21: Include tz in body position
             # Camera intrinsics for Maya/Blender
             "image_width": image_width,
             "image_height": image_height,
@@ -814,6 +820,7 @@ class SAM4DExportCharacterFBX:
                 "skip_first_frames": skip_first_frames,
                 "flip_x": flip_x,
                 "coordinate_system": coordinate_system,
+                "include_depth_position": include_depth_position,
             }
         }
         
