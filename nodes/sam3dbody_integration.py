@@ -559,11 +559,11 @@ class SAM4DTemporalSmoothing:
                     "tooltip": "Vertex position smoothing strength"
                 }),
                 "joint_smoothing": ("FLOAT", {
-                    "default": 0.7,
+                    "default": 0.0,
                     "min": 0.0,
                     "max": 1.0,
                     "step": 0.1,
-                    "tooltip": "Joint position smoothing strength"
+                    "tooltip": "Joint position smoothing strength. WARNING: Non-zero values can cause skewed skeleton in FBX. Use rotation_smoothing instead for cleaner results."
                 }),
                 "rotation_smoothing": ("FLOAT", {
                     "default": 0.8,
@@ -611,7 +611,7 @@ class SAM4DTemporalSmoothing:
         mesh_sequence: Dict,
         smoothing_window: int = 5,
         vertex_smoothing: float = 0.5,
-        joint_smoothing: float = 0.7,
+        joint_smoothing: float = 0.0,
         rotation_smoothing: float = 0.8
     ):
         """Apply temporal smoothing to mesh sequence."""
@@ -640,8 +640,9 @@ class SAM4DTemporalSmoothing:
                 smoothed_sequence["vertices"], smoothing_window, vertex_smoothing
             )
         
-        # Apply joint smoothing
+        # Apply joint smoothing (WARNING: can cause skewed skeleton)
         if joint_smoothing > 0 and "joint_coords" in smoothed_sequence["params"]:
+            print(f"[{get_timestamp()}] [SAM4DBodyCapture] WARNING: Applying joint position smoothing ({joint_smoothing}) - this can cause skewed skeleton in FBX")
             smoothed_sequence["params"]["joint_coords"] = self._smooth_array(
                 smoothed_sequence["params"]["joint_coords"], smoothing_window, joint_smoothing
             )

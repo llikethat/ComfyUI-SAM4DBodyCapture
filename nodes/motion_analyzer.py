@@ -41,18 +41,18 @@ def get_timestamp():
 # ============================================================================
 
 class MHRJoints:
-    """COCO 17-keypoint format used by SAM3DBody's pred_keypoints_2d.
+    """SAM3DBody pred_keypoints_2d format (70 joints).
     
-    SAM3DBody outputs 70 joints: 17 COCO body + hands + face.
-    debug21: Fixed to use COCO format based on visual evidence.
+    debug21: Indices confirmed by visual testing.
+    First 17 joints are body joints.
     
-    COCO format (first 17 joints):
-    0: nose, 1: left_eye, 2: right_eye, 3: left_ear, 4: right_ear,
-    5: left_shoulder, 6: right_shoulder, 7: left_elbow, 8: right_elbow,
-    9: left_wrist, 10: right_wrist, 11: left_hip, 12: right_hip,
-    13: left_knee, 14: right_knee, 15: left_ankle, 16: right_ankle
+    Format:
+    0: nose, 1: L_eye, 2: R_eye, 3: L_ear, 4: R_ear,
+    5: L_shoulder, 6: R_shoulder, 7: L_elbow, 8: R_elbow,
+    9: L_hip, 10: R_hip, 11: L_knee, 12: R_knee,
+    13: L_ankle, 14: R_ankle, 15: L_wrist, 16: R_wrist
     """
-    # COCO format body joints
+    # Body joints (confirmed by visual testing)
     NOSE = 0              # Nose (use as HEAD proxy)
     L_EYE = 1             # Left eye
     R_EYE = 2             # Right eye
@@ -62,19 +62,19 @@ class MHRJoints:
     R_SHOULDER = 6        # Right shoulder
     L_ELBOW = 7           # Left elbow
     R_ELBOW = 8           # Right elbow
-    L_WRIST = 9           # Left wrist
-    R_WRIST = 10          # Right wrist
-    L_HIP = 11            # Left hip
-    R_HIP = 12            # Right hip
-    L_KNEE = 13           # Left knee
-    R_KNEE = 14           # Right knee
-    L_ANKLE = 15          # Left ankle
-    R_ANKLE = 16          # Right ankle
+    L_HIP = 9             # Left hip (confirmed)
+    R_HIP = 10            # Right hip (confirmed)
+    L_KNEE = 11           # Left knee
+    R_KNEE = 12           # Right knee
+    L_ANKLE = 13          # Left ankle
+    R_ANKLE = 14          # Right ankle
+    L_WRIST = 15          # Left wrist
+    R_WRIST = 16          # Right wrist
     
     # Aliases for compatibility
     HEAD = 0              # Use nose as head proxy
-    NECK = 0              # Use nose as neck proxy (COCO has no neck)
-    PELVIS = 11           # Use L_HIP as pelvis proxy
+    NECK = 0              # Use nose as neck proxy (no neck joint)
+    PELVIS = 9            # Use L_HIP as pelvis proxy
     
     # Long-form aliases
     LEFT_SHOULDER = L_SHOULDER
@@ -91,14 +91,14 @@ class MHRJoints:
     RIGHT_ANKLE = R_ANKLE
     
     NUM_JOINTS = 70
-    NUM_BODY_JOINTS = 17  # First 17 are COCO body joints
+    NUM_BODY_JOINTS = 17  # First 17 are body joints
     
-    # Joint names for labeling (COCO format)
+    # Joint names for labeling
     JOINT_NAMES = {
         0: "nose", 1: "L_eye", 2: "R_eye", 3: "L_ear", 4: "R_ear",
         5: "L_shldr", 6: "R_shldr", 7: "L_elbow", 8: "R_elbow",
-        9: "L_wrist", 10: "R_wrist", 11: "L_hip", 12: "R_hip",
-        13: "L_knee", 14: "R_knee", 15: "L_ankle", 16: "R_ankle",
+        9: "L_hip", 10: "R_hip", 11: "L_knee", 12: "R_knee",
+        13: "L_ankle", 14: "R_ankle", 15: "L_wrist", 16: "R_wrist",
     }
 
 
@@ -169,8 +169,50 @@ class BodyJoints(SMPLHJoints):
     pass
 
 
-# SAM3DJoints alias for backward compatibility
-SAM3DJoints = SMPLHJoints
+# SAM3DJoints for 18-joint pred_keypoints_3d format
+# This uses the SAME format as pred_keypoints_2d (MHR format)
+class SAM3DJoints:
+    """SAM3DBody 18-joint format (pred_keypoints_3d).
+    
+    This is the same format as MHRJoints but for 3D keypoints.
+    debug21: Fixed to match actual pred_keypoints_3d format.
+    """
+    # Body joints (same as MHRJoints)
+    NOSE = 0
+    L_EYE = 1
+    R_EYE = 2
+    L_EAR = 3
+    R_EAR = 4
+    L_SHOULDER = 5
+    R_SHOULDER = 6
+    L_ELBOW = 7
+    R_ELBOW = 8
+    L_HIP = 9
+    R_HIP = 10
+    L_KNEE = 11
+    R_KNEE = 12
+    L_ANKLE = 13
+    R_ANKLE = 14
+    L_WRIST = 15
+    R_WRIST = 16
+    
+    # Aliases
+    HEAD = 0
+    PELVIS = 9
+    LEFT_HIP = L_HIP
+    LEFT_KNEE = L_KNEE
+    LEFT_ANKLE = L_ANKLE
+    LEFT_SHOULDER = L_SHOULDER
+    LEFT_ELBOW = L_ELBOW
+    LEFT_WRIST = L_WRIST
+    RIGHT_HIP = R_HIP
+    RIGHT_KNEE = R_KNEE
+    RIGHT_ANKLE = R_ANKLE
+    RIGHT_SHOULDER = R_SHOULDER
+    RIGHT_ELBOW = R_ELBOW
+    RIGHT_WRIST = R_WRIST
+    
+    NUM_JOINTS = 18
 
 
 def to_numpy(data):
@@ -379,7 +421,8 @@ def detect_foot_contact(
     keypoints_3d: np.ndarray,
     vertices: np.ndarray,
     skeleton_mode: str = "simple",
-    threshold_ratio: float = 0.05,
+    threshold_ratio: float = 0.10,
+    frame_idx: int = -1,
 ) -> str:
     """
     Detect if feet are in contact with ground.
@@ -389,6 +432,7 @@ def detect_foot_contact(
         vertices: [V, 3] mesh vertices
         skeleton_mode: "simple" (18-joint) or "full" (127-joint)
         threshold_ratio: Threshold as ratio of leg length
+        frame_idx: Frame index for debug logging (-1 to disable)
     
     Returns:
         "both", "left", "right", or "none"
@@ -411,6 +455,7 @@ def detect_foot_contact(
         right_knee = keypoints_3d[J.RIGHT_KNEE]
     
     # Ground plane estimate (lowest point of mesh)
+    # In SAM3DBody coordinate system, Y is typically vertical (negative = down)
     ground_y = vertices[:, 1].min()
     
     # Calculate leg length for adaptive threshold
@@ -421,9 +466,27 @@ def detect_foot_contact(
     # Adaptive threshold based on leg length
     threshold = avg_leg * threshold_ratio
     
+    # debug21: Log foot contact debug info for frame 0
+    if frame_idx == 0:
+        print(f"[Motion Analyzer] debug21: ===== FOOT CONTACT DEBUG =====")
+        print(f"[Motion Analyzer] Skeleton mode: {skeleton_mode}")
+        print(f"[Motion Analyzer] Joint indices: L_ANKLE={J.LEFT_ANKLE}, R_ANKLE={J.RIGHT_ANKLE}")
+        print(f"[Motion Analyzer] L_ankle 3D: ({left_ankle[0]:.3f}, {left_ankle[1]:.3f}, {left_ankle[2]:.3f})")
+        print(f"[Motion Analyzer] R_ankle 3D: ({right_ankle[0]:.3f}, {right_ankle[1]:.3f}, {right_ankle[2]:.3f})")
+        print(f"[Motion Analyzer] Ground Y (mesh min Y): {ground_y:.3f}")
+        print(f"[Motion Analyzer] Avg leg length: {avg_leg:.3f}")
+        print(f"[Motion Analyzer] Threshold ratio: {threshold_ratio}")
+        print(f"[Motion Analyzer] Threshold: {threshold:.3f}")
+        print(f"[Motion Analyzer] L_ankle Y dist from ground: {abs(left_ankle[1] - ground_y):.3f}")
+        print(f"[Motion Analyzer] R_ankle Y dist from ground: {abs(right_ankle[1] - ground_y):.3f}")
+    
     # Check contact
     left_contact = abs(left_ankle[1] - ground_y) < threshold
     right_contact = abs(right_ankle[1] - ground_y) < threshold
+    
+    if frame_idx == 0:
+        print(f"[Motion Analyzer] L_contact: {left_contact}, R_contact: {right_contact}")
+        print(f"[Motion Analyzer] =======================================")
     
     if left_contact and right_contact:
         return "both"
@@ -480,23 +543,23 @@ def create_motion_debug_overlay(
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
     # debug21: DYNAMIC INDEX MAPPING based on source
-    # pred_keypoints_2d = COCO format (confirmed correct!)
+    # pred_keypoints_2d = MHR format (confirmed correct!)
     # joint_coords projected = SMPLH format (fallback)
-    use_coco_indices = "pred_keypoints_2d" in joints_2d_source or "MHR" in joints_2d_source or "COCO" in joints_2d_source
+    use_mhr_indices = "pred_keypoints_2d" in joints_2d_source or "MHR" in joints_2d_source
     
-    if use_coco_indices:
-        # MHR/COCO 17-joint format (pred_keypoints_2d - confirmed correct!)
+    if use_mhr_indices:
+        # MHR/SAM3DBody format (pred_keypoints_2d - confirmed correct!)
         idx_map = {
             "HEAD": MHRJoints.HEAD,              # 0 (nose)
-            "PELVIS": MHRJoints.PELVIS,          # 11 (L_HIP)
-            "L_WRIST": MHRJoints.L_WRIST,        # 9
-            "R_WRIST": MHRJoints.R_WRIST,        # 10
-            "L_ANKLE": MHRJoints.L_ANKLE,        # 15
-            "R_ANKLE": MHRJoints.R_ANKLE,        # 16
+            "PELVIS": MHRJoints.PELVIS,          # 9 (L_HIP)
+            "L_WRIST": MHRJoints.L_WRIST,        # 15
+            "R_WRIST": MHRJoints.R_WRIST,        # 16
+            "L_ANKLE": MHRJoints.L_ANKLE,        # 13
+            "R_ANKLE": MHRJoints.R_ANKLE,        # 14
         }
         max_draw_index = MHRJoints.NUM_BODY_JOINTS  # 17
         joint_names = MHRJoints.JOINT_NAMES
-        format_name = "COCO"
+        format_name = "MHR"
     else:
         # SMPLH 127-joint format (joint_coords projected - fallback)
         idx_map = {
@@ -852,13 +915,13 @@ class SAM4DMotionAnalyzer:
         use_mhr_for_2d = has_kp_2d  # pred_keypoints_2d = MHR format (confirmed correct)
         
         if use_mhr_for_2d:
-            # COCO format indices (for pred_keypoints_2d - confirmed correct!)
-            pelvis_idx_2d = MHRJoints.PELVIS       # 11 (L_HIP)
+            # MHR format indices (for pred_keypoints_2d - confirmed correct!)
+            pelvis_idx_2d = MHRJoints.PELVIS       # 9 (L_HIP)
             head_idx_2d = MHRJoints.HEAD           # 0 (nose)
-            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 15
-            right_ankle_idx_2d = MHRJoints.R_ANKLE # 16
+            left_ankle_idx_2d = MHRJoints.L_ANKLE  # 13
+            right_ankle_idx_2d = MHRJoints.R_ANKLE # 14
             joint_names_2d = MHRJoints.JOINT_NAMES
-            format_2d = "COCO"
+            format_2d = "MHR"
         else:
             # SMPLH format indices (fallback for projected joint_coords)
             pelvis_idx_2d = SMPLHJoints.PELVIS       # 1
@@ -953,7 +1016,7 @@ class SAM4DMotionAnalyzer:
                     joints_2d = kp2d.copy()
                 
                 joints_2d_source = "pred_keypoints_2d (MHR 70-joint) - DIRECT"
-                format_2d = "COCO"  # Use COCO indices since pred_keypoints_2d uses COCO format
+                format_2d = "MHR"  # Use MHR indices since pred_keypoints_2d uses MHR format
                 
                 if i == 0:
                     print(f"[{get_timestamp()}] [Motion Analyzer] debug21: Using pred_keypoints_2d DIRECTLY (confirmed correct)")
@@ -984,7 +1047,7 @@ class SAM4DMotionAnalyzer:
                 joints_2d[:, 0] = image_size[0] / 2
                 joints_2d[:, 1] = image_size[1] / 2
                 joints_2d_source = "fallback (no data available)"
-                format_2d = "COCO"
+                format_2d = "MHR"
                 
                 if i == 0:
                     print(f"[{get_timestamp()}] [Motion Analyzer] WARNING: No 2D keypoint data!")
@@ -1001,7 +1064,7 @@ class SAM4DMotionAnalyzer:
                 print(f"[{get_timestamp()}] [Motion Analyzer] 2D format: {format_2d}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] Image size: {image_size[0]}x{image_size[1]}")
                 print(f"[{get_timestamp()}] [Motion Analyzer] --- Body Joints ({format_2d} indices) ---")
-                num_to_print = min(17 if format_2d == "COCO" else 24, len(joints_2d))
+                num_to_print = min(17 if format_2d == "MHR" else 24, len(joints_2d))
                 for j_idx in range(num_to_print):
                     j_name = joint_names_2d.get(j_idx, f"joint{j_idx}")
                     j_x, j_y = joints_2d[j_idx][0], joints_2d[j_idx][1]
@@ -1176,7 +1239,8 @@ class SAM4DMotionAnalyzer:
             # Foot contact detection
             skeleton_mode_str = "simple" if kp_source == "keypoints_3d" else "full"
             foot_contact = detect_foot_contact(
-                keypoints_3d, vertices, skeleton_mode_str, foot_contact_threshold
+                keypoints_3d, vertices, skeleton_mode_str, foot_contact_threshold,
+                frame_idx=i  # Pass frame index for debug logging
             )
             subject_motion["foot_contact"].append(foot_contact)
         

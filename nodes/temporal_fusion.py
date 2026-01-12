@@ -147,6 +147,13 @@ def smooth_params_sequence(
             smoothed_params[key] = values
             continue
         
+        # Don't smooth 3D joint positions - smoothing them independently
+        # breaks the skeletal structure and causes skewed joints in FBX
+        # debug21: Added to fix skewed skeleton in FBX export
+        if key in ["joint_coords", "keypoints_3d"]:
+            smoothed_params[key] = values
+            continue
+        
         # Smooth other parameters
         if arr.ndim == 1:
             if method == "gaussian":
