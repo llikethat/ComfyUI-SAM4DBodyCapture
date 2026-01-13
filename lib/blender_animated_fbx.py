@@ -823,42 +823,72 @@ def create_root_locator(all_frames, fps, up_axis, flip_x=False, frame_offset=0, 
     Create a root locator that carries the world translation.
     
     Args:
-        include_depth: If True, root_locator animates with full 3D position (tx, ty, tz)
-                      from pred_cam_t, making character move in world space.
+        include_depth: If True, root_locator animates with RELATIVE movement from frame 0.
+                      This tracks how much the character moves in world space over time.
     """
     print(f"[Blender] Creating root locator with world translation (include_depth={include_depth})...")
     
-    # DEBUG: Show first frame values
-    if all_frames:
+    # Calculate frame 0 position as reference (character starts at origin)
+    ref_world_x, ref_world_y, ref_world_z = 0, 0, 0
+    if include_depth and all_frames:
+        first_cam_t = all_frames[0].get("pred_cam_t")
+        if first_cam_t and len(first_cam_t) >= 3:
+            tx0, ty0, tz0 = first_cam_t[0], first_cam_t[1], first_cam_t[2]
+            ref_world_x = tx0 * abs(tz0)
+            ref_world_y = ty0 * abs(tz0)
+            ref_world_z = tz0
+    
+    # DEBUG: Show movement info
+    if all_frames and include_depth:
         first_cam_t = all_frames[0].get("pred_cam_t")
         if first_cam_t and len(first_cam_t) >= 3:
             tx, ty, tz = first_cam_t[0], first_cam_t[1], first_cam_t[2]
             print(f"[Blender] DEBUG: Frame 0 pred_cam_t: tx={tx:.4f}, ty={ty:.4f}, tz={tz:.4f}")
-            if include_depth:
-                world_x = tx * abs(tz)
-                world_y = ty * abs(tz)
-                print(f"[Blender] DEBUG: World position F0: x={world_x:.4f}, y={-world_y:.4f}, z={tz:.4f}")
-                # Show last frame too for movement range
-                if len(all_frames) > 1:
-                    last_cam_t = all_frames[-1].get("pred_cam_t")
-                    if last_cam_t and len(last_cam_t) >= 3:
-                        tx2, ty2, tz2 = last_cam_t[0], last_cam_t[1], last_cam_t[2]
-                        world_x2 = tx2 * abs(tz2)
-                        world_y2 = ty2 * abs(tz2)
-                        print(f"[Blender] DEBUG: World position F{len(all_frames)-1}: x={world_x2:.4f}, y={-world_y2:.4f}, z={tz2:.4f}")
-                        print(f"[Blender] DEBUG: Movement range: dx={world_x2-world_x:.4f}, dy={-world_y2+world_y:.4f}, dz={tz2-tz:.4f}")
-            else:
-                print(f"[Blender] DEBUG: include_depth=False, root_locator will stay at origin")
+            print(f"[Blender] DEBUG: Reference world pos (subtracted): x={ref_world_x:.4f}, y={ref_world_y:.4f}, z={ref_world_z:.4f}")
+            print(f"[Blender] DEBUG: Character starts at origin (0,0,0), moves relative from there")
+            
+            # Show last frame movement
+            if len(all_frames) > 1:
+                last_cam_t = all_frames[-1].get("pred_cam_t")
+                if last_cam_t and len(last_cam_t) >= 3:
+                    tx2, ty2, tz2 = last_cam_t[0], last_cam_t[1], last_cam_t[2]
+                    world_x2 = tx2 * abs(tz2) - ref_world_x
+                    world_y2 = ty2 * abs(tz2) - ref_world_y
+                    world_z2 = tz2 - ref_world_z
+                    print(f"[Blender] DEBUG: Frame {len(all_frames)-1} relative movement: dx={world_x2:.4f}, dy={-world_y2:.4f}, dz={world_z2:.4f}")
+    elif not include_depth:
+        print(f"[Blender] DEBUG: include_depth=False, root_locator stays at origin")
     
     root = bpy.data.objects.new("root_locator", None)
     root.empty_display_type = 'ARROWS'
     root.empty_display_size = 0.1
     bpy.context.collection.objects.link(root)
     
-    # Animate root position based on pred_cam_t
+    # Animate root position based on pred_cam_t (RELATIVE to frame 0)
     for frame_idx, frame_data in enumerate(all_frames):
         frame_cam_t = frame_data.get("pred_cam_t")
-        world_offset = get_world_offset_from_cam_t(frame_cam_t, up_axis, include_depth)
+        
+        if include_depth and frame_cam_t and len(frame_cam_t) >= 3:
+            tx, ty, tz = frame_cam_t[0], frame_cam_t[1], frame_cam_t[2]
+            
+            # Calculate world position relative to frame 0
+            world_x = tx * abs(tz) - ref_world_x
+            world_y = ty * abs(tz) - ref_world_y
+            world_z = tz - ref_world_z
+            
+            # Apply based on up_axis
+            if up_axis == "Y":
+                world_offset = Vector((world_x, -world_y, world_z))
+            elif up_axis == "Z":
+                world_offset = Vector((world_x, world_z, -world_y))
+            elif up_axis == "-Y":
+                world_offset = Vector((world_x, world_y, -world_z))
+            elif up_axis == "-Z":
+                world_offset = Vector((world_x, -world_z, world_y))
+            else:
+                world_offset = Vector((world_x, -world_y, world_z))
+        else:
+            world_offset = Vector((0, 0, 0))
         
         # Apply flip_x to the world offset
         if flip_x:
@@ -873,9 +903,19 @@ def create_root_locator(all_frames, fps, up_axis, flip_x=False, frame_offset=0, 
 
 def create_translation_track(all_frames, fps, up_axis, frame_offset=0, include_depth=False):
     """
-    Create a separate locator that shows the world path.
+    Create a separate locator that shows the world path (relative movement from frame 0).
     """
     print(f"[Blender] Creating separate translation track (include_depth={include_depth})...")
+    
+    # Calculate frame 0 position as reference
+    ref_world_x, ref_world_y, ref_world_z = 0, 0, 0
+    if include_depth and all_frames:
+        first_cam_t = all_frames[0].get("pred_cam_t")
+        if first_cam_t and len(first_cam_t) >= 3:
+            tx0, ty0, tz0 = first_cam_t[0], first_cam_t[1], first_cam_t[2]
+            ref_world_x = tx0 * abs(tz0)
+            ref_world_y = ty0 * abs(tz0)
+            ref_world_z = tz0
     
     track = bpy.data.objects.new("translation_track", None)
     track.empty_display_type = 'PLAIN_AXES'
@@ -884,7 +924,24 @@ def create_translation_track(all_frames, fps, up_axis, frame_offset=0, include_d
     
     for frame_idx, frame_data in enumerate(all_frames):
         frame_cam_t = frame_data.get("pred_cam_t")
-        world_offset = get_world_offset_from_cam_t(frame_cam_t, up_axis, include_depth)
+        
+        if include_depth and frame_cam_t and len(frame_cam_t) >= 3:
+            tx, ty, tz = frame_cam_t[0], frame_cam_t[1], frame_cam_t[2]
+            
+            # Calculate world position relative to frame 0
+            world_x = tx * abs(tz) - ref_world_x
+            world_y = ty * abs(tz) - ref_world_y
+            world_z = tz - ref_world_z
+            
+            # Apply based on up_axis
+            if up_axis == "Y":
+                world_offset = Vector((world_x, -world_y, world_z))
+            elif up_axis == "Z":
+                world_offset = Vector((world_x, world_z, -world_y))
+            else:
+                world_offset = Vector((world_x, -world_y, world_z))
+        else:
+            world_offset = Vector((0, 0, 0))
         
         track.location = world_offset
         track.keyframe_insert(data_path="location", frame=frame_idx + frame_offset)

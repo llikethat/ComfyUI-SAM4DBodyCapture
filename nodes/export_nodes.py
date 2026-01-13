@@ -579,7 +579,7 @@ class SAM4DExportCharacterFBX:
                 }),
                 "include_depth_position": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Animate root_locator with world position from pred_cam_t. Enable this to make the character move in 3D world space (X/Y horizontal, Z depth). Required for walking/moving characters."
+                    "tooltip": "Animate root_locator with character's world movement. Character starts at origin and moves relative to frame 0. Enable for walking/moving characters."
                 }),
                 "sensor_width": ("FLOAT", {
                     "default": 36.0,
