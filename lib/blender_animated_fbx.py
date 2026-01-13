@@ -209,18 +209,56 @@ def transform_rotation_matrix(rot_3x3, up_axis):
 FLIP_X = False
 
 
-def get_world_offset_from_cam_t(pred_cam_t, up_axis):
+def get_world_offset_from_cam_t(pred_cam_t, up_axis, include_depth=False):
     """
     Get world offset for root_locator.
     
-    IMPORTANT: root_locator should be at origin (0,0,0) because it parents both
-    the body and camera. Moving root_locator moves both together, which doesn't
-    affect the body's position relative to camera (i.e., alignment in camera view).
+    When include_depth=False (default):
+        Root locator stays at origin - body offset is applied separately to mesh/armature.
     
-    The actual body offset relative to camera is handled by get_body_offset_from_cam_t().
+    When include_depth=True:
+        Root locator animates with world position derived from pred_cam_t.
+        - tx, ty are converted to world units using: world_x = tx * tz
+        - tz is used directly as depth
+        This makes the character move in 3D world space matching the mesh overlay.
+    
+    Args:
+        pred_cam_t: Camera translation [tx, ty, tz] from SAM3DBody
+                   tx, ty are normalized image offsets
+                   tz is depth in meters
+        up_axis: Coordinate system up axis
+        include_depth: If True, include full 3D animated position on root_locator
     """
-    # Root locator stays at origin - body offset is applied separately
-    return Vector((0, 0, 0))
+    if not include_depth:
+        # Root locator stays at origin - body offset is applied separately
+        return Vector((0, 0, 0))
+    
+    if not pred_cam_t or len(pred_cam_t) < 3:
+        return Vector((0, 0, 0))
+    
+    tx, ty, tz = pred_cam_t[0], pred_cam_t[1], pred_cam_t[2]
+    
+    # Convert normalized tx, ty to world units using depth
+    # This matches how mesh overlay works: verts + cam_t then perspective projection
+    # In perspective: x_2d = focal * (verts_x + tx) / (verts_z + tz)
+    # For body at origin: x_2d = focal * tx / tz
+    # So world_x = tx * tz gives the world position
+    world_x = tx * abs(tz)
+    world_y = ty * abs(tz)
+    world_z = tz  # Depth in meters
+    
+    # Apply based on up_axis
+    # NOTE: y is NEGATED to match camera view convention (Y up means -Y is down in image)
+    if up_axis == "Y":
+        return Vector((world_x, -world_y, world_z))
+    elif up_axis == "Z":
+        return Vector((world_x, world_z, -world_y))
+    elif up_axis == "-Y":
+        return Vector((world_x, world_y, -world_z))
+    elif up_axis == "-Z":
+        return Vector((world_x, -world_z, world_y))
+    else:
+        return Vector((world_x, -world_y, world_z))
 
 
 def get_body_offset_from_cam_t(pred_cam_t, up_axis, include_depth=False):
@@ -780,22 +818,37 @@ def create_skeleton(all_frames, fps, transform_func, world_translation_mode="non
         return create_skeleton_with_positions(all_frames, fps, transform_func, world_translation_mode, up_axis, root_locator, joint_parents, frame_offset)
 
 
-def create_root_locator(all_frames, fps, up_axis, flip_x=False, frame_offset=0):
+def create_root_locator(all_frames, fps, up_axis, flip_x=False, frame_offset=0, include_depth=False):
     """
     Create a root locator that carries the world translation.
+    
+    Args:
+        include_depth: If True, root_locator animates with full 3D position (tx, ty, tz)
+                      from pred_cam_t, making character move in world space.
     """
-    print("[Blender] Creating root locator with world translation...")
+    print(f"[Blender] Creating root locator with world translation (include_depth={include_depth})...")
     
     # DEBUG: Show first frame values
     if all_frames:
         first_cam_t = all_frames[0].get("pred_cam_t")
         if first_cam_t and len(first_cam_t) >= 3:
             tx, ty, tz = first_cam_t[0], first_cam_t[1], first_cam_t[2]
-            world_x = tx * abs(tz) * 0.5
-            world_y = ty * abs(tz) * 0.5
             print(f"[Blender] DEBUG: Frame 0 pred_cam_t: tx={tx:.4f}, ty={ty:.4f}, tz={tz:.4f}")
-            print(f"[Blender] DEBUG: world_offset calc: x={world_x:.4f}, y={world_y:.4f}")
-            print(f"[Blender] DEBUG: Final root_locator (up={up_axis}): x={-world_x:.4f}, y={-world_y:.4f}")
+            if include_depth:
+                world_x = tx * abs(tz)
+                world_y = ty * abs(tz)
+                print(f"[Blender] DEBUG: World position F0: x={world_x:.4f}, y={-world_y:.4f}, z={tz:.4f}")
+                # Show last frame too for movement range
+                if len(all_frames) > 1:
+                    last_cam_t = all_frames[-1].get("pred_cam_t")
+                    if last_cam_t and len(last_cam_t) >= 3:
+                        tx2, ty2, tz2 = last_cam_t[0], last_cam_t[1], last_cam_t[2]
+                        world_x2 = tx2 * abs(tz2)
+                        world_y2 = ty2 * abs(tz2)
+                        print(f"[Blender] DEBUG: World position F{len(all_frames)-1}: x={world_x2:.4f}, y={-world_y2:.4f}, z={tz2:.4f}")
+                        print(f"[Blender] DEBUG: Movement range: dx={world_x2-world_x:.4f}, dy={-world_y2+world_y:.4f}, dz={tz2-tz:.4f}")
+            else:
+                print(f"[Blender] DEBUG: include_depth=False, root_locator will stay at origin")
     
     root = bpy.data.objects.new("root_locator", None)
     root.empty_display_type = 'ARROWS'
@@ -805,7 +858,7 @@ def create_root_locator(all_frames, fps, up_axis, flip_x=False, frame_offset=0):
     # Animate root position based on pred_cam_t
     for frame_idx, frame_data in enumerate(all_frames):
         frame_cam_t = frame_data.get("pred_cam_t")
-        world_offset = get_world_offset_from_cam_t(frame_cam_t, up_axis)
+        world_offset = get_world_offset_from_cam_t(frame_cam_t, up_axis, include_depth)
         
         # Apply flip_x to the world offset
         if flip_x:
@@ -814,15 +867,15 @@ def create_root_locator(all_frames, fps, up_axis, flip_x=False, frame_offset=0):
         root.location = world_offset
         root.keyframe_insert(data_path="location", frame=frame_idx + frame_offset)
     
-    print(f"[Blender] Root locator animated over {len(all_frames)} frames (offset={frame_offset}, flip_x={flip_x})")
+    print(f"[Blender] Root locator animated over {len(all_frames)} frames (offset={frame_offset}, flip_x={flip_x}, include_depth={include_depth})")
     return root
 
 
-def create_translation_track(all_frames, fps, up_axis, frame_offset=0):
+def create_translation_track(all_frames, fps, up_axis, frame_offset=0, include_depth=False):
     """
     Create a separate locator that shows the world path.
     """
-    print("[Blender] Creating separate translation track...")
+    print(f"[Blender] Creating separate translation track (include_depth={include_depth})...")
     
     track = bpy.data.objects.new("translation_track", None)
     track.empty_display_type = 'PLAIN_AXES'
@@ -831,12 +884,12 @@ def create_translation_track(all_frames, fps, up_axis, frame_offset=0):
     
     for frame_idx, frame_data in enumerate(all_frames):
         frame_cam_t = frame_data.get("pred_cam_t")
-        world_offset = get_world_offset_from_cam_t(frame_cam_t, up_axis)
+        world_offset = get_world_offset_from_cam_t(frame_cam_t, up_axis, include_depth)
         
         track.location = world_offset
         track.keyframe_insert(data_path="location", frame=frame_idx + frame_offset)
     
-    print(f"[Blender] Translation track animated over {len(all_frames)} frames (offset={frame_offset})")
+    print(f"[Blender] Translation track animated over {len(all_frames)} frames (offset={frame_offset}, include_depth={include_depth})")
     return track
 
 
@@ -1634,12 +1687,17 @@ def main():
     root_locator = None
     body_offset = Vector((0, 0, 0))
     if world_translation_mode == "root":
-        root_locator = create_root_locator(frames, fps, up_axis, flip_x, frame_offset)
+        # Pass include_depth_position to root_locator - depth will animate on root_locator
+        root_locator = create_root_locator(frames, fps, up_axis, flip_x, frame_offset, include_depth_position)
         
-        # Get body offset for aligning body relative to camera (STATIC from frame 0)
+        # Get body offset for aligning body relative to camera
+        # When include_depth_position=True, depth is on root_locator, so body_offset should NOT include depth
+        # This avoids double-applying the depth
         first_cam_t = frames[0].get("pred_cam_t")
-        body_offset = get_body_offset_from_cam_t(first_cam_t, up_axis, include_depth_position)
-        print(f"[Blender] Body offset for camera alignment: {body_offset} (include_depth={include_depth_position})")
+        body_offset = get_body_offset_from_cam_t(first_cam_t, up_axis, include_depth=False)  # Always False here
+        print(f"[Blender] Body offset for camera alignment: {body_offset}")
+        if include_depth_position:
+            print(f"[Blender] Depth (tz) is animated on root_locator, not body_offset")
     
     # Create mesh with shape keys
     mesh_obj = None
@@ -1662,7 +1720,7 @@ def main():
     
     # Create separate translation track if in "separate" mode
     if world_translation_mode == "separate":
-        create_translation_track(frames, fps, up_axis, frame_offset)
+        create_translation_track(frames, fps, up_axis, frame_offset, include_depth_position)
     
     # Create camera
     camera_obj = None

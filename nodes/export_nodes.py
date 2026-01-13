@@ -20,7 +20,7 @@ from typing import Dict, Tuple, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 
 # Version for logging (sync with other files)
-VERSION = "0.5.0-debug21"
+VERSION = "0.5.0-debug23"
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -579,7 +579,7 @@ class SAM4DExportCharacterFBX:
                 }),
                 "include_depth_position": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Include depth (tz) in body position. When enabled, body moves in Z axis based on distance from camera. Matches mesh overlay depth."
+                    "tooltip": "Animate root_locator with world position from pred_cam_t. Enable this to make the character move in 3D world space (X/Y horizontal, Z depth). Required for walking/moving characters."
                 }),
                 "sensor_width": ("FLOAT", {
                     "default": 36.0,
@@ -801,7 +801,7 @@ class SAM4DExportCharacterFBX:
             "world_translation_mode": "root",  # Character at origin
             "skeleton_mode": "positions",
             "sensor_width": sensor_width,
-            "include_depth_position": include_depth_position,  # debug21: Include tz in body position
+            "include_depth_position": include_depth_position,  # debug23: Include tz in body position
             # Camera intrinsics for Maya/Blender
             "image_width": image_width,
             "image_height": image_height,

@@ -19,7 +19,7 @@ Joint Index Reference (MHR 70-Joint / 127-Joint formats share same body indices)
 """
 
 # Version for logging
-VERSION = "0.5.0-debug21"
+VERSION = "0.5.0-debug23"
 
 import numpy as np
 import torch
@@ -43,7 +43,7 @@ def get_timestamp():
 class MHRJoints:
     """SAM3DBody pred_keypoints_2d format (70 joints).
     
-    debug21: Indices confirmed by visual testing.
+    debug23: Indices confirmed by visual testing.
     First 17 joints are body joints.
     
     Format:
@@ -175,7 +175,7 @@ class SAM3DJoints:
     """SAM3DBody 18-joint format (pred_keypoints_3d).
     
     This is the same format as MHRJoints but for 3D keypoints.
-    debug21: Fixed to match actual pred_keypoints_3d format.
+    debug23: Fixed to match actual pred_keypoints_3d format.
     """
     # Body joints (same as MHRJoints)
     NOSE = 0
@@ -466,9 +466,9 @@ def detect_foot_contact(
     # Adaptive threshold based on leg length
     threshold = avg_leg * threshold_ratio
     
-    # debug21: Log foot contact debug info for frame 0
+    # debug23: Log foot contact debug info for frame 0
     if frame_idx == 0:
-        print(f"[Motion Analyzer] debug21: ===== FOOT CONTACT DEBUG =====")
+        print(f"[Motion Analyzer] debug23: ===== FOOT CONTACT DEBUG =====")
         print(f"[Motion Analyzer] Skeleton mode: {skeleton_mode}")
         print(f"[Motion Analyzer] Joint indices: L_ANKLE={J.LEFT_ANKLE}, R_ANKLE={J.RIGHT_ANKLE}")
         print(f"[Motion Analyzer] L_ankle 3D: ({left_ankle[0]:.3f}, {left_ankle[1]:.3f}, {left_ankle[2]:.3f})")
@@ -542,7 +542,7 @@ def create_motion_debug_overlay(
     COLOR_TEXT = (255, 255, 255)     # White
     COLOR_LABEL = (255, 255, 255)    # White for joint labels
     
-    # debug21: DYNAMIC INDEX MAPPING based on source
+    # debug23: DYNAMIC INDEX MAPPING based on source
     # pred_keypoints_2d = MHR format (confirmed correct!)
     # joint_coords projected = SMPLH format (fallback)
     use_mhr_indices = "pred_keypoints_2d" in joints_2d_source or "MHR" in joints_2d_source
@@ -575,8 +575,8 @@ def create_motion_debug_overlay(
         format_name = "SMPLH"
     
     # Log which format we're using (once)
-    print(f"[Motion Analyzer] debug21: Using {format_name} index mapping for overlay")
-    print(f"[Motion Analyzer] debug21: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
+    print(f"[Motion Analyzer] debug23: Using {format_name} index mapping for overlay")
+    print(f"[Motion Analyzer] debug23: HEAD={idx_map['HEAD']}, PELVIS={idx_map['PELVIS']}, L_ANKLE={idx_map['L_ANKLE']}, R_ANKLE={idx_map['R_ANKLE']}")
     
     # Special joint indices for coloring (using dynamic map)
     special_joints = {
@@ -905,12 +905,12 @@ class SAM4DMotionAnalyzer:
         
         # ===== PER-FRAME ANALYSIS =====
         # ===== JOINT INDICES =====
-        # debug21: Use SMPLH indices since we PROJECT joint_coords to 2D
+        # debug23: Use SMPLH indices since we PROJECT joint_coords to 2D
         # This matches the mesh renderer which uses joint_coords
         # Priority: joint_coords (SMPLH) > keypoints_3d (MHR fallback)
         
         # Determine which format will be used for 2D joints
-        # debug21: CONFIRMED pred_keypoints_2d (MHR) is correct!
+        # debug23: CONFIRMED pred_keypoints_2d (MHR) is correct!
         # Use MHR format when pred_keypoints_2d is available
         use_mhr_for_2d = has_kp_2d  # pred_keypoints_2d = MHR format (confirmed correct)
         
@@ -934,7 +934,7 @@ class SAM4DMotionAnalyzer:
         # 3D indices always use SMPLH format (for joint_coords or keypoints_3d)
         pelvis_idx_3d = SMPLHJoints.PELVIS
         
-        print(f"[{get_timestamp()}] [Motion Analyzer] debug21: 2D format = {format_2d}")
+        print(f"[{get_timestamp()}] [Motion Analyzer] debug23: 2D format = {format_2d}")
         print(f"[{get_timestamp()}] [Motion Analyzer] 2D indices: pelvis={pelvis_idx_2d}, head={head_idx_2d}, L_ankle={left_ankle_idx_2d}, R_ankle={right_ankle_idx_2d}")
         
         # Track body_world (global trajectory) if using joint_coords
@@ -998,7 +998,7 @@ class SAM4DMotionAnalyzer:
                 keypoints_3d = keypoints_3d.squeeze(0)
             
             # ===== GET 2D JOINTS FOR VISUALIZATION =====
-            # debug21: CONFIRMED pred_keypoints_2d is CORRECT!
+            # debug23: CONFIRMED pred_keypoints_2d is CORRECT!
             # Joint Debug Overlay showed:
             # - BLUE (pred_keypoints_2d) aligns with athlete
             # - RED (joint_coords projected) is wrong
@@ -1019,7 +1019,7 @@ class SAM4DMotionAnalyzer:
                 format_2d = "MHR"  # Use MHR indices since pred_keypoints_2d uses MHR format
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug21: Using pred_keypoints_2d DIRECTLY (confirmed correct)")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug23: Using pred_keypoints_2d DIRECTLY (confirmed correct)")
                     print(f"[{get_timestamp()}] [Motion Analyzer] pred_keypoints_2d shape: {joints_2d.shape}")
                     print(f"[{get_timestamp()}] [Motion Analyzer] Head (MHR idx 0): ({joints_2d[0,0]:.1f}, {joints_2d[0,1]:.1f})")
                     if len(joints_2d) > 9:
@@ -1039,7 +1039,7 @@ class SAM4DMotionAnalyzer:
                 format_2d = "SMPLH"
                 
                 if i == 0:
-                    print(f"[{get_timestamp()}] [Motion Analyzer] debug21: FALLBACK to joint_coords projection")
+                    print(f"[{get_timestamp()}] [Motion Analyzer] debug23: FALLBACK to joint_coords projection")
                     subject_motion["joints_2d_source"] = joints_2d_source
             else:
                 # LAST RESORT: Use center of image as fallback
