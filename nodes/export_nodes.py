@@ -20,7 +20,7 @@ from typing import Dict, Tuple, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 
 # Version for logging (sync with other files)
-VERSION = "0.5.0-debug23"
+VERSION = "0.5.0-debug24"
 
 # IST timezone (UTC+5:30)
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -801,7 +801,7 @@ class SAM4DExportCharacterFBX:
             "world_translation_mode": "root",  # Character at origin
             "skeleton_mode": "positions",
             "sensor_width": sensor_width,
-            "include_depth_position": include_depth_position,  # debug23: Include tz in body position
+            "include_depth_position": include_depth_position,  # debug24: Include tz in body position
             # Camera intrinsics for Maya/Blender
             "image_width": image_width,
             "image_height": image_height,
